@@ -1,0 +1,403 @@
+/*
+ * Style overrides for OpenClient.
+ *
+ * Elementary OS first: accent/borders/state colors come from the
+ * Granite stylesheet, spacing follows the 6/12/18 rhythm and rounded
+ * corners stay subtle (10–14px). Everything degrades gracefully on
+ * plain GTK4 because we only use standard named colors.
+ */
+
+/* ---------------------------------------------------------------- chat */
+
+.bubble {
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid alpha(@borders, 0.35);
+}
+
+.user-bubble {
+  background-color: alpha(@accent_color, 0.14);
+  border-color: alpha(@accent_color, 0.28);
+}
+
+/* Assistant answers are flat full-width text (T3-style), not bubbles:
+ * no background, no border — tool cards keep their own chrome. */
+.assistant-bubble {
+  background: none;
+  border: none;
+  padding: 2px;
+}
+
+.message-meta {
+  font-size: 0.8em;
+  opacity: 0.55;
+  margin-top: 2px;
+}
+
+/* Persistent turn-failure line (history), matching the live error divider. */
+.chat-error-label {
+  color: @error_color;
+  font-size: 0.9em;
+}
+
+/* --------------------------------------------------------- reasoning */
+
+.reasoning-block {
+  margin-bottom: 4px;
+  opacity: 0.92;
+}
+
+.reasoning-title {
+  font-size: 0.9em;
+  font-weight: bold;
+}
+
+.reasoning-label {
+  font-size: 0.9em;
+  opacity: 0.68;
+  border-left: 2px solid alpha(@accent_color, 0.45);
+  padding-left: 8px;
+}
+
+/* -------------------------------------------------------- live status */
+
+.live-status {
+  opacity: 0.75;
+  font-size: 0.9em;
+  margin-bottom: 2px;
+}
+
+/* ------------------------------------------------------------ tools */
+
+.tool-card {
+  background-color: alpha(@borders, 0.16);
+  border: 1px solid alpha(@borders, 0.28);
+  border-radius: 12px;
+  padding: 2px;
+}
+
+.tool-name {
+  font-weight: bold;
+  font-size: 0.9em;
+}
+
+.tool-summary {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+.tool-detail {
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
+.tool-output {
+  font-size: 0.85em;
+  background-color: alpha(@borders, 0.22);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.tool-spinner spinner {
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.tool-label {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
+
+/* -------------------------------------------------------- dividers */
+
+.system-divider {
+  margin-top: 12px;
+  margin-bottom: 12px;
+  opacity: 0.85;
+}
+
+.system-divider-label {
+  font-size: 0.9em;
+  font-weight: bold;
+}
+
+/* --------------------------------------------------------- sidebar */
+
+.navigation-sidebar {
+  background-color: alpha(@borders, 0.08);
+  padding: 6px;
+}
+
+.navigation-sidebar row {
+  border-radius: 10px;
+  margin: 1px 2px;
+  transition: background-color 150ms ease;
+}
+
+.navigation-sidebar row:selected {
+  background-color: alpha(@accent_color, 0.18);
+}
+
+.navigation-sidebar row:hover:not(:selected) {
+  background-color: alpha(@borders, 0.14);
+}
+
+.sidebar-avatar {
+  border-radius: 10px;
+  background-color: alpha(@accent_color, 0.14);
+  border: 1px solid alpha(@accent_color, 0.22);
+}
+
+.sidebar-title {
+  font-weight: bold;
+  font-size: 0.95em;
+}
+
+.status-dot {
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 9999px;
+  background-color: @accent_color;
+  border: 2px solid @bg_color;
+  box-shadow: 0 0 0 1px alpha(@accent_color, 0.35);
+}
+
+.session-spinner {
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.model-icon {
+  opacity: 0.9;
+}
+
+/* -------------------------------------------------------- composer */
+
+/* Same elementary card as the new-session prompt: the background and
+ * shadow come from Granite's "card" class, we only add inner padding. */
+.composer-card {
+  padding: 6px;
+}
+
+.composer-entry {
+  background: none;
+  border: none;
+}
+
+/* Attachments */
+.attachment-chip {
+  background-color: alpha(@borders, 0.28);
+  border-radius: 10px;
+  padding: 4px 4px 4px 8px;
+}
+
+.attachment-image {
+  border-radius: 8px;
+}
+
+/* Forms */
+.form-card {
+  padding: 12px;
+}
+
+/* Context meter */
+levelbar trough {
+  min-height: 6px;
+  border-radius: 9999px;
+}
+
+/* Context meter ramp. NOTE: driven from code (Composer adds
+ * .context-high/.context-full to the bar), NOT via offset classes:
+ * GTK tags filled blocks with every defined offset, so pure offset
+ * selectors cannot discriminate and paint everything red. */
+levelbar block.filled {
+  background-color: @accent_color;
+}
+
+levelbar.context-high block.filled {
+  background-color: @warning_color;
+}
+
+levelbar.context-full block.filled {
+  background-color: @error_color;
+}
+
+/* ------------------------------------------------------ markdown tables */
+
+.md-table {
+  border: 1px solid alpha(@borders, 0.4);
+  border-radius: 8px;
+  background-color: alpha(@borders, 0.08);
+}
+
+.md-table-cell {
+  padding: 6px 10px;
+  border-top: 1px solid alpha(@borders, 0.25);
+}
+
+.md-table-header {
+  font-weight: bold;
+  border-top: none;
+  background-color: alpha(@borders, 0.16);
+}
+
+.md-quote {
+  opacity: 0.88;
+  border-left: 2px solid alpha(@borders, 0.6);
+  padding-left: 8px;
+}
+
+.md-code-lang {
+  font-size: 0.8em;
+  opacity: 0.55;
+}
+
+/* ------------------------------------------------------------ diffs */
+
+.monospace {
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.diff-patch {
+  background-color: alpha(@borders, 0.2);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.diff-stat {
+  font-weight: bold;
+}
+
+.diff-chip {
+  font-family: monospace;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+/* ------------------------------------------------------- permission */
+
+.permission-banner {
+  border: 1px solid alpha(@warning_color, 0.6);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+/* ------------------------------------------------------------- pill */
+
+.pill {
+  border-radius: 9999px;
+  padding: 4px 16px;
+  box-shadow: 0 2px 8px alpha(black, 0.25);
+  background-color: @bg_color;
+  border: 1px solid alpha(@borders, 0.45);
+}
+
+/* --------------------------------------------------------- settings */
+
+notebook > header {
+  background-color: alpha(@borders, 0.08);
+  padding: 4px;
+}
+
+notebook > header tabs > tab {
+  border-radius: 8px;
+  padding: 4px 12px;
+}
+
+notebook > header tabs > tab:checked {
+  background-color: alpha(@accent_color, 0.18);
+}
+
+.rich-list row {
+  border-radius: 10px;
+  margin: 1px 4px;
+  transition: background-color 150ms ease;
+}
+
+.rich-list row:hover {
+  background-color: alpha(@borders, 0.14);
+}
+
+/* Picker panels (model / agent / variant, and the slash-command
+ * list): trim the theme's oversized row min-height so cells read
+ * compactly without looking cramped. Scoped to .picker-list so
+ * Settings and the diff list keep their roomier rows. */
+.picker-list row {
+  min-height: 30px;
+  padding: 0;
+  margin: 1px 2px;
+  border-radius: 8px;
+}
+
+/* Colored capability icons: keep full opacity (they are not symbolic). */
+.model-cap {
+  opacity: 1;
+}
+
+/* ------------------------------------------------- settings page */
+
+/* Page titles use Granite.HeaderLabel H2; section labels the default
+ * H4. Cards group related rows the way System Settings groups them. */
+.settings-title {
+  font-size: 1.5em;
+  font-weight: bold;
+}
+
+.settings-list,
+.settings-scroll,
+.settings-scroll viewport {
+  background: transparent;
+}
+
+/* ---------------------------------------------------------- spinner */
+
+.braille-spinner {
+  font-family: monospace;
+}
+
+dim-label {
+  opacity: 0.55;
+}
+
+/* ------------------------------------------------- session panel */
+
+.session-panel {
+  background-color: alpha(@bg_color, 0.35);
+  border-left: 1px solid alpha(@borders, 0.35);
+}
+
+/* ------------------------------------------------- new session UI */
+
+/* The prompt card leans on Granite's "card" style class for its
+ * background and shadow; only the inner padding is ours. */
+.new-session-card {
+  padding: 6px;
+}
+
+.new-session-input {
+  background: none;
+  border: none;
+}
+
+.panel-section-title {
+  font-weight: bold;
+  font-size: 0.9em;
+}
+
+.session-panel levelbar trough {
+  min-height: 6px;
+  border-radius: 9999px;
+}
+
+.session-panel levelbar block.filled {
+  background-color: @accent_color;
+}
+
+.session-panel levelbar.context-high block.filled {
+  background-color: @warning_color;
+}
+
+.session-panel levelbar.context-full block.filled {
+  background-color: @error_color;
+}

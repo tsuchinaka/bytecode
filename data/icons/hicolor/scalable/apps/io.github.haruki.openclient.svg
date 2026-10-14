@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Background: elementary OS card style, rounded -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#3689e6"/>
+  <!-- Terminal / code hint -->
+  <rect x="28" y="36" width="72" height="56" rx="12" fill="white" opacity="0.95"/>
+  <circle cx="38" cy="48" r="4" fill="#f37329"/>
+  <circle cx="50" cy="48" r="4" fill="#f9c440"/>
+  <circle cx="62" cy="48" r="4" fill="#68b723"/>
+  <!-- Prompt: >_ -->
+  <path d="M36 68 L48 76 L36 84" fill="none" stroke="#3689e6" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="52" y="80" width="20" height="5" rx="2" fill="#3689e6"/>
+  <!-- Spark -->
+  <path d="M88 62 L92 72 L102 76 L92 80 L88 90 L84 80 L74 76 L84 72 Z" fill="#f37329"/>
+</svg>
