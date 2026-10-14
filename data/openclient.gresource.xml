@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/haruki/openclient">
+    <file alias="style.css">style.css</file>
+    <file>icons/openai-symbolic.svg</file>
+    <file>icons/anthropic-symbolic.svg</file>
+    <file>icons/gemini-symbolic.svg</file>
+    <file>icons/deepseek-symbolic.svg</file>
+    <file>icons/zai-symbolic.svg</file>
+    <file>icons/xai-symbolic.svg</file>
+    <file>icons/xiaomi-symbolic.svg</file>
+    <file>icons/moonshot-symbolic.svg</file>
+    <file>icons/qwen-symbolic.svg</file>
+    <file>icons/minimax-symbolic.svg</file>
+    <file>icons/mistral-symbolic.svg</file>
+    <file>icons/meta-symbolic.svg</file>
+    <file>icons/ollama-symbolic.svg</file>
+    <file>icons/nvidia-symbolic.svg</file>
+    <file>icons/copilot-symbolic.svg</file>
+    <file>icons/huggingface-symbolic.svg</file>
+    <file>icons/perplexity-symbolic.svg</file>
+    <file>icons/openrouter-symbolic.svg</file>
+    <file>icons/openai.svg</file>
+    <file>icons/anthropic.svg</file>
+    <file>icons/gemini.svg</file>
+    <file>icons/deepseek.svg</file>
+    <file>icons/zai.svg</file>
+    <file>icons/xai.svg</file>
+    <file>icons/xiaomi.svg</file>
+    <file>icons/moonshot.svg</file>
+    <file>icons/qwen.svg</file>
+    <file>icons/minimax.svg</file>
+    <file>icons/mistral.svg</file>
+    <file>icons/meta.svg</file>
+    <file>icons/ollama.svg</file>
+    <file>icons/nvidia.svg</file>
+    <file>icons/copilot.svg</file>
+    <file>icons/huggingface.svg</file>
+    <file>icons/perplexity.svg</file>
+    <file>icons/openrouter.svg</file>
+  </gresource>
+</gresources>

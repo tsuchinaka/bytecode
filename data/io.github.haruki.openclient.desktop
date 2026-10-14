@@ -1,0 +1,23 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OpenCode Client
+GenericName=AI Coding Agent
+Comment=A native client for OpenCode
+Comment[es]=Cliente nativo para OpenCode
+Exec=/home/haruki/.local/bin/io.github.haruki.openclient
+Icon=io.github.haruki.openclient
+DBusActivatable=false
+StartupNotify=true
+StartupWMClass=io.github.haruki.openclient
+Terminal=false
+Categories=Development;IDE;
+Keywords=AI;agent;chat;opencode;code;LLM;
+Keywords[es]=IA;agente;chat;codigo;
+X-GNOME-UsesNotifications=true
+Actions=NewSession;
+
+[Desktop Action NewSession]
+Name=New Session
+Name[es]=Nueva sesión
+Exec=/home/haruki/.local/bin/io.github.haruki.openclient --new-session

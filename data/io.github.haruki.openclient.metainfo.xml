@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.haruki.openclient</id>
+
+  <name>OpenCode Client</name>
+  <summary>A native client for OpenCode</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <description>
+    <p>A fast, native GTK4 client for the OpenCode AI coding agent server.</p>
+    <p>Features:</p>
+    <ul>
+      <li>Browse and manage sessions</li>
+      <li>Chat with streaming responses</li>
+      <li>View reasoning output</li>
+      <li>Lightweight: built with Vala, GTK4 and Granite</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.haruki.openclient.desktop</launchable>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-13"/>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+</component>
