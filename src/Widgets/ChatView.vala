@@ -1,99 +1,101 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Scrollable conversation view. Keeps a bubble per message id.
+ * Scrollable conversation view. Keeps one bubble per message id,
+ * system-event dividers between them, and one change card per file
+ * the agent touches in a turn.
  *
  * Scroll policy: while the user stays near the bottom, every new
- * message is first shown from its top, then the live stream is
- * followed to the newest line. The moment the user scrolls up,
- * the view stops moving and a floating pill offers a jump back
- * to the latest message.
+ * message is shown from its top and the live stream is followed to
+ * the newest line. The moment the user scrolls up, the view stops
+ * moving and a floating pill offers a jump back to the latest
+ * message.
  *
- * Note: Gtk.ScrolledWindow is final in GTK4, so this is a Box
- * that owns a scrolled window inside an overlay.
+ * Note: Gtk.ScrolledWindow is final in GTK4, so this is a Box that
+ * owns a scrolled window inside an overlay.
  */
 
 namespace OpenClient {
 
 public class ChatView : Gtk.Box {
     private Gtk.ScrolledWindow scrolled;
+    private Gtk.Overlay overlay;
     private Gtk.Box message_box;
     private Gtk.Button latest_pill;
+    /** Bubble per message id. */
     private Gee.HashMap<string, MessageBubble> bubbles;
+    /** Divider per system event id. */
     private Gee.HashMap<string, SystemDivider> dividers;
-    /** One card per changed file, updated in place as a turn keeps
-     *  writing it (see set_file_change). */
+    /** One card per changed file in the current turn, updated in
+     *  place while the turn keeps writing it. */
     private Gee.HashMap<string, ChangeCard> changes;
-    /** The same cards in the order they arrived, so a rebuild can put
-     *  them back after the conversation in a stable order. */
+    /** Stable order the change cards arrived in, so a rebuild puts
+     *  them back after the conversation. */
     private Gee.ArrayList<string> change_order;
+    /** Model learned from the stream before a bubble exists yet. */
     private Gee.HashMap<string, string> pending_models;
-    private bool stick_to_bottom = true;
-    private Gtk.Widget? pending_top_widget = null;
-    private bool programmatic_scroll = false;
     /** While true, appends skip per-message scroll pinning; the
      *  caller pins once at the end via end_bulk (). */
     private bool bulk_loading = false;
-    /** Playful rotating lines ("Doing the cookies…") vs a plain
-     *  "Thinking…" while awaiting the first reply. */
+    /** Playful rotating lines vs a plain "Thinking…" footer. */
     public bool playful { get; set; default = true; }
-    /** "Model is working" placeholder shown between send and the first
-     *  streamed content, with rotating playful status lines. */
-    /** What the footer describes: real model work vs blocked on input. */
     public enum PendingState {
         WORKING,
         WAITING_PERMISSION,
         WAITING_ANSWER
     }
-
     private PendingState pending_state = PendingState.WORKING;
     private Gtk.Box? pending_box = null;
     private BrailleSpinner? pending_spinner = null;
     private Gtk.Label? pending_label = null;
     private uint quip_source = 0;
-    private string[] quips;
+    private string[] quips = {
+        "Doing the cookies…",
+        "Checking the traps…",
+        "Warming up the servers…",
+        "Thinking…"
+    };
     private int last_quip = -1;
+    private bool stick_to_bottom = true;
+    private Gtk.Widget? pending_top_widget = null;
+    private bool programmatic_scroll = false;
 
     public ChatView () {
         Object (
             orientation: Gtk.Orientation.VERTICAL,
             vexpand: true
         );
+        add_css_class ("chat-view");
+
+        scrolled = new Gtk.ScrolledWindow () {
+            hscrollbar_policy = Gtk.PolicyType.NEVER,
+            vscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
+            propagate_natural_height = true,
+            propagate_natural_width = true
+        };
+        overlay = new Gtk.Overlay ();
+        message_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        message_box.add_css_class ("chat-message-box");
+        scrolled.set_child (message_box);
+        overlay.set_child (scrolled);
+        append (overlay);
+
+        latest_pill = new Gtk.Button.with_label ("↓ Latest") {
+            halign = Gtk.Align.CENTER,
+            valign = Gtk.Align.END,
+            margin_bottom = 12,
+            visible = false
+        };
+        latest_pill.add_css_class ("pill");
+        latest_pill.clicked.connect (() => scroll_to_bottom (true));
+        overlay.add_overlay (latest_pill);
+
         bubbles = new Gee.HashMap<string, MessageBubble> ();
         dividers = new Gee.HashMap<string, SystemDivider> ();
         changes = new Gee.HashMap<string, ChangeCard> ();
         change_order = new Gee.ArrayList<string> ();
         pending_models = new Gee.HashMap<string, string> ();
-        quips = {
-            "Doing the cookies…",
-            "Warming up the GPUs…",
-            "Consulting the oracle…",
-            "Herding electrons…",
-            "Polishing the tokens…",
-            "Asking the hamsters…",
-            "Reading the docs (for once)…",
-            "Feeding the context window…",
-            "Stirring the neural soup…",
-            "Convincing the bits…",
-            "Sharpening the pencils…",
-            "Brewing the coffee…",
-            "Untangling the cables…",
-            "Waking up the model…"
-        };
 
-        message_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 18) {
-            margin_top = 18,
-            margin_bottom = 18,
-            margin_start = 12,
-            margin_end = 12,
-            valign = Gtk.Align.START
-        };
-
-        scrolled = new Gtk.ScrolledWindow () {
-            vexpand = true,
-            hscrollbar_policy = Gtk.PolicyType.NEVER,
-            child = message_box
-        };
         /* `changed` fires once the new content is really allocated,
          * so pinning here never reads a stale upper value. */
         scrolled.vadjustment.changed.connect (() => {
@@ -117,22 +119,111 @@ public class ChatView : Gtk.Box {
             }
             update_pill ();
         });
+    }
 
-        latest_pill = new Gtk.Button.with_label ("↓ Latest") {
-            halign = Gtk.Align.CENTER,
-            valign = Gtk.Align.END,
-            margin_bottom = 12,
-            visible = false
-        };
-        latest_pill.add_css_class ("pill");
-        latest_pill.clicked.connect (() => scroll_to_bottom (true));
+    /* -- scroll & pending pill ------------------------------------- */
 
-        var overlay = new Gtk.Overlay () {
-            child = scrolled
-        };
-        overlay.add_overlay (latest_pill);
+    private bool is_near_bottom () {
+        var adjustment = scrolled.vadjustment;
+        if (adjustment == null) {
+            return true;
+        }
+        return adjustment.value >= adjustment.upper - adjustment.page_size - 60;
+    }
 
-        append (overlay);
+    private void update_pill () {
+        if (latest_pill.visible == stick_to_bottom) {
+            latest_pill.visible = !stick_to_bottom;
+        }
+    }
+
+    public void scroll_to_bottom (bool force = false) {
+        if (force) {
+            stick_to_bottom = true;
+            pending_top_widget = null;
+        }
+        if (!stick_to_bottom) {
+            update_pill ();
+            return;
+        }
+        /* Best effort now; the `changed` handler pins again once the
+         * fresh allocation lands, so this never reads stale geometry. */
+        pin_to_bottom ();
+        update_pill ();
+    }
+
+    /** Pins the viewport to the newest line. */
+    private void pin_to_bottom () {
+        var adjustment = scrolled.vadjustment;
+        if (adjustment == null) {
+            return;
+        }
+        programmatic_scroll = true;
+        adjustment.value = adjustment.upper;
+        programmatic_scroll = false;
+    }
+
+    /** Shows a new message from its top, so a long turn is read from
+     *  the start while it streams in below. */
+    private void scroll_widget_top (Gtk.Widget widget) {
+        var adjustment = scrolled.vadjustment;
+        if (adjustment == null) {
+            return;
+        }
+        Gtk.Allocation alloc;
+        widget.get_allocation (out alloc);
+        var y = alloc.y;
+        Gtk.Widget? parent = widget.get_parent ();
+        while (parent != null && parent != message_box) {
+            Gtk.Allocation parent_alloc;
+            parent.get_allocation (out parent_alloc);
+            y += parent_alloc.y;
+            parent = parent.get_parent ();
+        }
+        programmatic_scroll = true;
+        adjustment.value = double.min (y, adjustment.upper);
+        programmatic_scroll = false;
+    }
+
+    private void pin_pending_last () {
+        if (pending_box == null || pending_box.get_parent () != message_box) {
+            return;
+        }
+        /* Already the last child (the common case when messages stream
+         *  in one after another): skipping the move avoids GTK
+         *  re-measuring every sibling in the box for a no-op. */
+        if (message_box.get_last_child () == pending_box) {
+            return;
+        }
+        message_box.remove (pending_box);
+        message_box.append (pending_box);
+    }
+
+    /* -- bulk rebuild -------------------------------------------- */
+
+    public void begin_bulk () {
+        bulk_loading = true;
+    }
+
+    public void end_bulk () {
+        bulk_loading = false;
+        /* Change cards describe what the session looks like now, not
+         *  where in its history a render happened to be: after a
+         *  rebuild they belong after the conversation. */
+        foreach (var path in change_order) {
+            var card = changes[path];
+            if (card == null || card.get_parent () != message_box) {
+                continue;
+            }
+            message_box.remove (card);
+            message_box.append (card);
+        }
+        pin_pending_last ();
+        scroll_to_bottom (true);
+    }
+
+    public void cancel_bulk () {
+        bulk_loading = false;
     }
 
     public void clear () {
@@ -149,13 +240,91 @@ public class ChatView : Gtk.Box {
         change_order.clear ();
         pending_models.clear ();
         latest_pill.visible = false;
-        /* A fresh conversation starts at the bottom: the scroll state
-         *  belongs to the conversation that was just dropped, and
-         *  inheriting "user scrolled up" would open the next session
-         *  part-way with the jump pill showing. */
         stick_to_bottom = true;
         pending_top_widget = null;
         programmatic_scroll = false;
+    }
+
+    /* -- adding content ------------------------------------------ */
+
+    public void add_message (Message message, bool force_scroll = false) {
+        if (!message.renderable) {
+            return;
+        }
+
+        if (message.role == MessageRole.SYSTEM) {
+            var divider = new SystemDivider (
+                message.id,
+                message.system_icon,
+                message.divider_text (),
+                message.divider_status ()
+            );
+            if (message.system_summary != "") {
+                divider.set_summary (message.system_summary);
+                divider.collapse_on_done ();
+            }
+            dividers[message.id] = divider;
+            message_box.append (divider);
+            if (bulk_loading) {
+                return;
+            }
+            divider.add_css_class ("chat-arrive");
+            pin_pending_last ();
+            if (!force_scroll) {
+                pending_top_widget = divider;
+            }
+            scroll_to_bottom (force_scroll);
+            return;
+        }
+
+        var bubble = new MessageBubble (message);
+        bubbles[message.id] = bubble;
+        message_box.append (bubble);
+        if (bulk_loading) {
+            return;
+        }
+        bubble.add_css_class ("chat-arrive");
+        pin_pending_last ();
+        if (!force_scroll) {
+            pending_top_widget = bubble;
+        }
+        scroll_to_bottom (force_scroll);
+    }
+
+    public MessageBubble ensure_bubble (string message_id) {
+        if (bubbles.has_key (message_id)) {
+            return bubbles[message_id];
+        }
+        var message = new Message () {
+            id = message_id,
+            role = MessageRole.ASSISTANT
+        };
+        var bubble = new MessageBubble (message);
+        if (pending_models.has_key (message_id)) {
+            bubble.set_model (pending_models[message_id]);
+            pending_models.unset (message_id);
+        }
+        bubbles[message_id] = bubble;
+        message_box.append (bubble);
+        bubble.add_css_class ("chat-arrive");
+        pin_pending_last ();
+        pending_top_widget = bubble;
+        scroll_to_bottom ();
+        return bubble;
+    }
+
+    /* -- live status footer -------------------------------------- */
+
+    /** Freezes every live status line and drops the footer: the turn
+     *  is over, so nothing streams anymore. Freezes ALL bubbles, not
+     *  just ones created mid-turn: live events can spin lines on
+     *  history-loaded bubbles too, and those must never be left
+     *  running. */
+    public void finish_live () {
+        hide_pending ();
+        foreach (var bubble in bubbles.values) {
+            bubble.finish_live ();
+        }
     }
 
     /** Shows the "model is working" footer (spinner + status line),
@@ -273,168 +442,8 @@ public class ChatView : Gtk.Box {
         pending_label.label = quips[i];
     }
 
-    /** Keeps the pending footer after every real message, so a
-     *  history rebuild landing mid-turn, or a freshly streamed
-     *  bubble or divider, never buries it mid-list.
-     *  (Re-append, not reorder: GtkBox treats a NULL sibling as the
-     *  first position, which is the wrong end here.) */
-    private void pin_pending_last () {
-        if (pending_box == null || pending_box.get_parent () != message_box) {
-            return;
-        }
-        /* Already the last child (the common case when messages stream
-         * in one after another): skipping the move avoids GTK
-         * unparenting/reparenting the footer and re-measuring every
-         * sibling in the box for a no-op. */
-        if (message_box.get_last_child () == pending_box) {
-            return;
-        }
-        message_box.remove (pending_box);
-        message_box.append (pending_box);
-    }
+    /* -- streaming --------------------------------------------- */
 
-    public void add_message (Message message, bool force_scroll = false) {
-        if (bubbles.has_key (message.id) || dividers.has_key (message.id)) {
-            return;
-        }
-        if (!message.renderable) {
-            return;
-        }
-
-        if (message.role == MessageRole.SYSTEM) {
-            var divider = new SystemDivider (
-                message.id,
-                message.system_icon,
-                message.divider_text (),
-                message.divider_status ()
-            );
-            if (message.system_summary != "") {
-                divider.set_summary (message.system_summary);
-                divider.collapse_on_done ();
-            }
-            dividers[message.id] = divider;
-            message_box.append (divider);
-            if (bulk_loading) {
-                return;
-            }
-            /* Live arrival (not a history rebuild): play the entrance. */
-            divider.add_css_class ("chat-arrive");
-            pin_pending_last ();
-            if (!force_scroll) {
-                pending_top_widget = divider;
-            }
-            scroll_to_bottom (force_scroll);
-            return;
-        }
-
-        var bubble = new MessageBubble (message);
-        bubbles[message.id] = bubble;
-        message_box.append (bubble);
-        if (bulk_loading) {
-            return;
-        }
-        bubble.add_css_class ("chat-arrive");
-        pin_pending_last ();
-        if (!force_scroll) {
-            pending_top_widget = bubble;
-        }
-        scroll_to_bottom (force_scroll);
-    }
-
-    /** Starts a bulk rebuild: per-message scroll pinning is skipped
-     *  until end_bulk (). */
-    public void begin_bulk () {
-        bulk_loading = true;
-    }
-
-    /** Ends a bulk rebuild: one pin at the end. */
-    public void end_bulk () {
-        bulk_loading = false;
-        /* Change cards describe what the session looks like now, not
-         *  where in its history a render happened to be: after a
-         *  rebuild they belong after the conversation. */
-        foreach (var path in change_order) {
-            var card = changes[path];
-            if (card == null || card.get_parent () != message_box) {
-                continue;
-            }
-            message_box.remove (card);
-            message_box.append (card);
-        }
-        pin_pending_last ();
-        scroll_to_bottom (true);
-    }
-
-    /** Aborts a bulk rebuild (e.g. superseded by a newer one)
-     *  without pinning the scroll position. */
-    public void cancel_bulk () {
-        bulk_loading = false;
-    }
-
-    /** Creates or updates a centered system divider (live events). */
-    public void set_divider (string divider_id, string icon_name, string text, string status) {
-        var divider = dividers[divider_id];
-        if (divider == null) {
-            divider = new SystemDivider (divider_id, icon_name, text, status);
-            dividers[divider_id] = divider;
-            message_box.append (divider);
-            /* Live dividers enter like history-added ones. */
-            divider.add_css_class ("chat-arrive");
-            pin_pending_last ();
-            pending_top_widget = divider;
-            scroll_to_bottom ();
-            return;
-        }
-        divider.set_status (icon_name, text, status);
-        if (status != "running") {
-            divider.collapse_on_done ();
-        }
-        scroll_to_bottom ();
-    }
-
-    public void append_divider_summary (string divider_id, string delta) {
-        var divider = dividers[divider_id];
-        if (divider == null) {
-            return;
-        }
-        divider.append_summary (delta);
-        scroll_to_bottom ();
-    }
-
-    /** A new turn starts: changes after this (even to a file an earlier
-     *  turn already touched) get their own card, so the conversation
-     *  records what each turn changed instead of one card silently
-     *  growing for the whole session. The cards already on screen stay
-     *  where they are. */
-    public void begin_turn_changes () {
-        changes.clear ();
-        change_order.clear ();
-    }
-
-    /** A file the agent changed, shown in the conversation where it
-     *  happened: one card per path within a turn, updated in place
-     *  while that turn keeps writing it. */
-    public void set_file_change (string path, int additions, int deletions,
-        string status, string patch, bool editing) {
-        var card = changes[path];
-        var is_new = card == null;
-        if (is_new) {
-            card = new ChangeCard (path);
-            changes[path] = card;
-            change_order.add (path);
-            message_box.append (card);
-        }
-        card.set_change (additions, deletions, status, patch, editing);
-        if (!is_new || bulk_loading) {
-            return;
-        }
-        card.add_css_class ("chat-arrive");
-        pin_pending_last ();
-        pending_top_widget = card;
-        scroll_to_bottom ();
-    }
-
-    /** Records the model a message belongs to; applied when its bubble appears. */
     public void note_model (string message_id, string model) {
         if (model == "") {
             return;
@@ -443,44 +452,6 @@ public class ChatView : Gtk.Box {
             bubbles[message_id].set_model (model);
         } else {
             pending_models[message_id] = model;
-        }
-    }
-
-    public MessageBubble ensure_bubble (string message_id) {
-        if (bubbles.has_key (message_id)) {
-            return bubbles[message_id];
-        }
-        var message = new Message () {
-            id = message_id,
-            role = MessageRole.ASSISTANT
-        };
-        var bubble = new MessageBubble (message);
-        if (pending_models.has_key (message_id)) {
-            bubble.set_model (pending_models[message_id]);
-            pending_models.unset (message_id);
-        }
-        bubbles[message_id] = bubble;
-        message_box.append (bubble);
-        /* A streamed turn opening its bubble: same entrance as any
-         *  other live arrival. */
-        bubble.add_css_class ("chat-arrive");
-        /* Streamed content must never bury the footer: it stays
-         * pinned at the very bottom until the turn ends. */
-        pin_pending_last ();
-        pending_top_widget = bubble;
-        scroll_to_bottom ();
-        return bubble;
-    }
-
-    /** Freezes every live status line of the finished turn and drops
-     *  the footer: the turn is over, so nothing streams anymore.
-     *  Freezes ALL bubbles, not just ones created mid-turn: live
-     *  events can spin lines on history-loaded bubbles too, and those
-     *  must never be left running. */
-    public void finish_live () {
-        hide_pending ();
-        foreach (var bubble in bubbles.values) {
-            bubble.finish_live ();
         }
     }
 
@@ -516,86 +487,73 @@ public class ChatView : Gtk.Box {
         }
     }
 
-    public void tool_done (string message_id, string call_id, string output, Gee.ArrayList<FileAttachment>? files, bool error = false) {
+    public void tool_done (string message_id, string call_id, string output,
+        Gee.ArrayList<FileAttachment>? files, bool error = false) {
         if (bubbles.has_key (message_id)) {
             bubbles[message_id].tool_done (call_id, output, files, error);
         }
     }
 
-    /** Follows the stream only when the user is already at the bottom. */
-    private bool is_near_bottom () {
-        var adjustment = scrolled.vadjustment;
-        if (adjustment == null) {
-            return true;
-        }
-        return adjustment.value >= adjustment.upper - adjustment.page_size - 60;
-    }
+    /* -- system dividers --------------------------------------- */
 
-    private void update_pill () {
-        if (latest_pill.visible == stick_to_bottom) {
-            latest_pill.visible = !stick_to_bottom;
-        }
-    }
-
-    public void scroll_to_bottom (bool force = false) {
-        if (force) {
-            stick_to_bottom = true;
-            pending_top_widget = null;
-        }
-        if (!stick_to_bottom) {
-            update_pill ();
+    public void set_divider (string divider_id, string icon_name, string text, string status) {
+        var divider = dividers[divider_id];
+        if (divider == null) {
+            divider = new SystemDivider (divider_id, icon_name, text, status);
+            dividers[divider_id] = divider;
+            message_box.append (divider);
+            divider.add_css_class ("chat-arrive");
+            pin_pending_last ();
+            pending_top_widget = divider;
+            scroll_to_bottom ();
             return;
         }
-        /* Best effort now; the `changed` handler pins again once the
-         * fresh allocation lands, so this never reads stale geometry. */
-        pin_to_bottom ();
-        update_pill ();
+        divider.set_status (icon_name, text, status);
+        if (status != "running") {
+            divider.collapse_on_done ();
+        }
+        scroll_to_bottom ();
     }
 
-    /** Pins the viewport to the newest line. */
-    private void pin_to_bottom () {
-        var adjustment = scrolled.vadjustment;
-        if (adjustment == null) {
+    public void append_divider_summary (string divider_id, string delta) {
+        var divider = dividers[divider_id];
+        if (divider == null) {
             return;
         }
-        var target = adjustment.upper - adjustment.page_size;
-        /* Already showing the newest line: the common case while a
-         * turn streams, since every delta re-enters this method. Writing
-         * the same value again only emits adjustment signals, so the
-         * check is what keeps streaming cheap. */
-        if (adjustment.value >= target - 0.5) {
-            return;
-        }
-        programmatic_scroll = true;
-        adjustment.set_value (target);
-        programmatic_scroll = false;
+        divider.append_summary (delta);
+        scroll_to_bottom ();
     }
 
-    /** Reveals a new message from its first line. */
-    private void scroll_widget_top (Gtk.Widget widget) {
-        var adjustment = scrolled.vadjustment;
-        if (adjustment == null) {
-            return;
-        }
-        /* Y inside the scrolled viewport: translate the widget's own
-         *  top-left relative to the message list. Widget.get_allocation
-         *  is deprecated and only gives the widget-local box. */
-        Graphene.Point top;
-        if (!widget.compute_point (message_box, Graphene.Point.zero (), out top)) {
-            /* Not in the same hierarchy (yet): nothing to reveal. */
-            return;
-        }
-        var max = adjustment.upper - adjustment.page_size;
-        scroll_to_value (double.min (top.y, double.max (0, max)));
+    /* -- changed files ----------------------------------------- */
+
+    /** A new turn starts: changes after this (even to a file an
+     *  earlier turn already touched) get their own card, so the
+     *  conversation records what each turn changed instead of one
+     *  card silently growing for the whole session. Cards already on
+     *  screen stay where they are. */
+    public void begin_turn_changes () {
+        changes.clear ();
+        change_order.clear ();
     }
 
-    private void scroll_to_value (double target) {
-        var adjustment = scrolled.vadjustment;
-        if (adjustment != null) {
-            programmatic_scroll = true;
-            adjustment.set_value (double.max (0, target));
-            programmatic_scroll = false;
+    public void set_file_change (string path, int additions, int deletions,
+        string status, string patch, bool editing) {
+        var card = changes[path];
+        var is_new = card == null;
+        if (is_new) {
+            card = new ChangeCard (path);
+            changes[path] = card;
+            change_order.add (path);
+            message_box.append (card);
         }
+        card.set_change (additions, deletions, status, patch, editing);
+        if (!is_new || bulk_loading) {
+            return;
+        }
+        card.add_css_class ("chat-arrive");
+        pin_pending_last ();
+        pending_top_widget = card;
+        scroll_to_bottom ();
     }
 }
 
