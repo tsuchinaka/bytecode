@@ -381,6 +381,10 @@ public class SessionPanel : Gtk.Box {
                 last_context_band = band;
             }
             context_label.label = "%.1f%%".printf (fraction * 100.0);
+            var session_cost = session.cost > 0 ? Store.format_cost (session.cost) : "";
+            if (session_cost != "") {
+                context_label.label += @" · $session_cost";
+            }
         } else {
             context_bar.value = 0.0;
             context_label.label = "None";

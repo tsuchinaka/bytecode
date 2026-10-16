@@ -933,6 +933,18 @@ public class Store : GLib.Object {
         return tokens.to_string ();
     }
 
+    /** Session cost for one-line readouts: cents precision once it is
+     *  worth showing, four decimals before that, nothing at zero. */
+    public static string format_cost (double cost) {
+        if (cost >= 0.01) {
+            return "$%.2f".printf (cost);
+        }
+        if (cost > 0) {
+            return "$%.4f".printf (cost);
+        }
+        return "";
+    }
+
     public async void reload_sessions () throws RequestError {
         if (client == null) {
             return;
