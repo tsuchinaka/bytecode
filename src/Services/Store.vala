@@ -1071,7 +1071,22 @@ public class Store : GLib.Object {
         if (payload != null) {
             text = JsonUtil.string_member (payload, "text") ?? "";
         }
-        if (text == "") {
+
+        /* The payload carries the attachments too (same shape the stored
+         *  message has). Ignoring them is why a pasted image showed up
+         *  as a bubble with no picture: the message either went through
+         *  another client, or the optimistic echo was already spent, and
+         *  this path drew it from the text alone. */
+        var files = new Gee.ArrayList<FileAttachment> ();
+        if (payload != null) {
+            foreach (var file_obj in JsonUtil.array_objects (payload, "files")) {
+                var attachment = FileAttachment.from_json (file_obj);
+                if (attachment != null) {
+                    files.add (attachment);
+                }
+            }
+        }
+        if (text == "" && files.size == 0) {
             return;
         }
 
@@ -1081,6 +1096,12 @@ public class Store : GLib.Object {
         }
 
         var message = Message.user_message (inbox_id, text);
+        foreach (var file in files) {
+            message.parts.add (new MessagePart () {
+                kind = PartKind.FILE,
+                file = file
+            });
+        }
         active_messages.add (message);
         active_message_ids.add (inbox_id);
         message_appended (message);
