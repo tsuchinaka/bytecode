@@ -55,6 +55,8 @@ public class Composer : Gtk.Box {
     private Gtk.Button attach_button;
     private Gtk.Label status_label;
     private Gtk.MenuButton diff_button;
+    private Gtk.Box? diff_row = null;
+    private Gtk.Label? diff_editing_label = null;
     private Gtk.Box diff_list_box;
     private Gtk.Label diff_chip_label;
     private Gtk.Spinner diff_chip_spinner;
@@ -192,6 +194,27 @@ public class Composer : Gtk.Box {
         };
         frame.append (attachments_revealer);
 
+        /* Changed files, right above the input it belongs to: the chip
+         *  summarises the session and names the file being written. */
+        diff_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
+            margin_start = 12,
+            margin_end = 12,
+            margin_top = 8,
+            visible = false
+        };
+        diff_button.add_css_class ("diff-chip-button");
+        diff_row.append (diff_button);
+        diff_editing_label = new Gtk.Label ("") {
+            xalign = 0,
+            ellipsize = Pango.EllipsizeMode.MIDDLE,
+            visible = false,
+            hexpand = true
+        };
+        diff_editing_label.add_css_class (Granite.CssClass.DIM);
+        diff_editing_label.add_css_class ("caption");
+        diff_row.append (diff_editing_label);
+        frame.append (diff_row);
+
         text_view = new Gtk.TextView () {
             wrap_mode = Gtk.WrapMode.WORD_CHAR,
             top_margin = 10,
@@ -315,16 +338,15 @@ public class Composer : Gtk.Box {
         };
         status_label.add_css_class ("message-meta");
 
-        /* Changed-files chip: a compact summary that opens the list of
-         *  files the agent has touched (one row per path), with a
-         *  spinner on anything being written right now. */
+        /* Changed-files chip: sits directly above the input and opens
+         *  the list of files the agent has touched (one row per path),
+         *  with a spinner on anything being written right now. */
         diff_button = new Gtk.MenuButton () {
             valign = Gtk.Align.CENTER,
-            visible = false,
             tooltip_text = "Files changed in this session"
         };
         diff_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-        diff_button.add_css_class ("diff-chip");
+        diff_button.add_css_class ("diff-chip-button");
 
         var diff_chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
             valign = Gtk.Align.CENTER
@@ -394,7 +416,6 @@ public class Composer : Gtk.Box {
         buttons.append (variant_chooser);
         buttons.append (busy_spinner);
         buttons.append (status_label);
-        buttons.append (diff_button);
         buttons.append (attach_button);
         buttons.append (stop_button);
         buttons.append (send_button);
@@ -545,8 +566,12 @@ public class Composer : Gtk.Box {
      *  path, plus a spinner on files being written right now (including
      *  ones the diff has not caught up with yet). */
     public void set_diff_files (Gee.ArrayList<FileDiff> files, Gee.ArrayList<string> editing) {
+        if (diff_row == null || diff_editing_label == null) {
+            return;
+        }
         if (files.size == 0 && editing.size == 0) {
-            diff_button.visible = false;
+            diff_row.visible = false;
+            diff_editing_label.visible = false;
             clear_box (diff_list_box);
             return;
         }
@@ -557,14 +582,26 @@ public class Composer : Gtk.Box {
             additions += diff.additions;
             deletions += diff.deletions;
         }
-        diff_button.visible = true;
+        diff_row.visible = true;
         diff_chip_label.label = @"+$additions −$deletions · $(files.size)";
         diff_button.tooltip_text = files.size == 1
-            ? @"$(files.size) file changed in this session"
+            ? "1 file changed in this session"
             : @"$(files.size) files changed in this session";
         var busy = editing.size > 0;
         diff_chip_spinner.visible = busy;
         diff_chip_spinner.spinning = busy;
+        /* Name the file being written, so the input shows what is
+         *  changing without opening anything. */
+        if (busy) {
+            var first = GLib.Path.get_basename (editing[0]);
+            diff_editing_label.label = editing.size > 1
+                ? @"Editing $first and $((int) editing.size - 1) more"
+                : @"Editing $first";
+            diff_editing_label.tooltip_text = ListArrays.join ("\n", editing);
+            diff_editing_label.visible = true;
+        } else {
+            diff_editing_label.visible = false;
+        }
 
         clear_box (diff_list_box);
         var listed = new Gee.HashSet<string> ();

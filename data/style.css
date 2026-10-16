@@ -367,6 +367,12 @@ levelbar.context-full block.filled {
 }
 
 
+.diff-chip-button {
+  padding: 1px 10px;
+  border-radius: 9999px;
+  background-color: alpha(@borders, 0.25);
+}
+
 .diff-chip-label {
   font-family: monospace;
   font-size: 0.85em;
