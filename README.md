@@ -1,6 +1,7 @@
-# OpenCode Client
+# bytecode
 
-A native [OpenCode](https://opencode.ai) client for elementary OS.
+bytecode, an OpenCode client: a native [OpenCode](https://opencode.ai)
+client for elementary OS.
 
 Built with **Vala + GTK4 + Granite**, talking directly to the OpenCode
 server API (`opencode serve`). No Electron, no web view, no Node.js
@@ -8,7 +9,7 @@ runtime in the app itself.
 
 ## Why this exists
 
-OpenChamber proves the idea — a GUI over the OpenCode agent — but it
+OpenChamber proves the idea (a GUI over the OpenCode agent), but it
 ships as an Electron/React app. This project takes the same idea and
 builds it natively for elementary OS:
 
@@ -23,7 +24,7 @@ builds it natively for elementary OS:
 
 ```
 ┌──────────────────────────────────────────┐
-│  OpenCode Client (Vala / GTK4)           │
+│  bytecode (Vala / GTK4)                  │
 │                                          │
 │  Widgets ── Store ── Client (REST)       │
 │              │       EventStream (SSE)   │
@@ -34,17 +35,17 @@ builds it natively for elementary OS:
 └──────────────────────────────────────────┘
 ```
 
-- `src/Services/Client.vala` — REST client (libsoup 3), auth via
+- `src/Services/Client.vala`: REST client (libsoup 3), auth via
   HTTP Basic (`opencode:<password>`).
-- `src/Services/EventStream.vala` — SSE reader for `GET /api/event`
+- `src/Services/EventStream.vala`: SSE reader for `GET /api/event`
   with exponential-backoff reconnect.
-- `src/Services/Store.vala` — turns raw events (`session.text.delta`,
+- `src/Services/Store.vala`: turns raw events (`session.text.delta`,
   `session.reasoning.delta`, `session.execution.*`, …) into
   view-friendly signals.
-- `src/Widgets/` — sidebar, chat view, message bubbles, composer,
+- `src/Widgets/`: sidebar, chat view, message bubbles, composer,
   connection dialog. Two-pane layout following the elementary OS
   panes pattern.
-- `src/GtkCompat.vala` + `src/gtk-compat.c` — the only hand-written C in
+- `src/GtkCompat.vala` + `src/gtk-compat.c`: the only hand-written C in
   the project. GTK 4.22 declares some array parameters as
   `const char * const *` and a few widgets as their base type, which
   Vala 0.56 cannot express; GCC 14 treats the resulting mismatch as a
@@ -65,7 +66,7 @@ sudo apt install valac meson libgtk-4-dev libgranite-7-dev \
 
 ## The server
 
-The app runs its own `opencode serve` — there is no server to start and
+The app runs its own `opencode serve`, so there is no server to start and
 no password to paste:
 
 - **Its own port** (4599 by default). If something else already holds
@@ -81,7 +82,7 @@ no password to paste:
 
 Settings → Connection shows the command, port and passcode, with
 "Apply & Restart Server" to change them. Turn the switch off to point
-the app at a server you run yourself instead (host, port, password) —
+the app at a server you run yourself instead (host, port, password),
 for example a shared server the TUI is attached to.
 
 ```bash
@@ -110,7 +111,7 @@ sudo meson install -C build
 
 ### Local install (binary + .desktop + icons)
 
-Fresh machines — build dependencies first:
+Fresh machines: build dependencies first:
 
 ```bash
 sudo apt install valac meson ninja-build pkg-config libgtk-4-dev \
@@ -145,13 +146,13 @@ entry (including the "New Session" action) works everywhere.
 - Sessions: list, create, delete, rename, fork
 - Bulk delete: the sidebar's select toggle turns every row into a
   checkbox (click a row to tick it), with select-all and one
-  confirmation for the whole batch — the open conversation closes if it
+  confirmation for the whole batch; the open conversation closes if it
   was part of it, and pin/archive flags go with the sessions
 - Live CLI sync: prompts sent from the CLI appear instantly, titles
   update live, reconnects resync automatically
 - Chat with throttled streaming text + reasoning (coalesced renders,
   autoscroll with intent: each new message reveals from the top,
-  live output is followed only while you stay at the bottom —
+  live output is followed only while you stay at the bottom,
   scrolling up freezes the view and shows a "Latest" pill)
 - Stop/interrupt a running turn
 - Live status dots, per-session cost and token counts
@@ -170,7 +171,7 @@ entry (including the "New Session" action) works everywhere.
 - In-window Settings, elementary style: category sidebar
   (Connection, Appearance, Behavior, Workspace, Providers,
   Credentials, MCP servers, Worktrees) with H2 titles, card groups
-  led by H4 section labels and HIG list rows — no separate window,
+  led by H4 section labels and HIG list rows, with no separate window,
   a single place for host, port and password
 - Connection page: live server status with version, one-click Test
   against the entered credentials, Save & Reconnect
@@ -179,7 +180,7 @@ entry (including the "New Session" action) works everywhere.
 - Behavior page: master desktop-notification switch with per-event
   toggles (finished turns, permission requests, question prompts),
   playful status lines, Ctrl+Enter-to-send for the composer, and
-  delete-session confirmation — every switch saved instantly and
+  delete-session confirmation, with every switch saved instantly and
   honored everywhere
 - Providers with live detail: endpoint, models served, context max,
   scoped to the open session's folder; editing opencode.jsonc
@@ -196,7 +197,7 @@ entry (including the "New Session" action) works everywhere.
   live and from history) and context sources (skills, MCP servers)
 - Desktop notifications: turn finished/failed on background sessions,
   permission requests with Allow once / Reject buttons, question
-  prompts — only when you are not already looking at that session
+  prompts, and only when you are not already looking at that session
 - Model picker with search, thinking-level variants and colored
   capability icons (text, vision, audio, video, PDF, tool calling)
   plus colored provider brand logos used consistently across the UI
@@ -208,24 +209,24 @@ entry (including the "New Session" action) works everywhere.
 - Permission requests: Allow Once / Always / Reject banner
 - Rich tool cards: per-tool icon, one-line summary (command, path,
   URL, query), animated spinner while running, expandable details
-  with full output and image results — live via SSE tool events
+  with full output and image results, live via SSE tool events
 - Verbose thinking by default: single "Thinking…" line (symbolic
   icon + spinner, no duplicated status), "Thought for Xs" with
   duration when done; quiet card-style "↓ Latest" pill
 - Live session changes chip (+N −M · F files) refreshed after every
   step, opening the diff viewer
-- Agent question forms: full OpenCode form support — string, number,
+- Agent question forms: full OpenCode form support (string, number,
   integer, boolean, multiselect, dropdowns (with optional custom
   answers), external links, conditional `when` fields, hidden fields,
   per-field constraints (min/max length/value, min/max items, email/
   URL formats, placeholders), client-side validation before submit,
   and Cancel to settle the question server-side
 - Centered system dividers (rules + icon, no bubble) for
-  compaction, model/agent switches, retries — and failed turns, with
+  compaction, model/agent switches, retries) and failed turns, with
   the real provider error message instead of silence
 - Failures persist: turns the server stored with finish "error" render
   their error line from history, surviving restarts and session hops
-- Compaction anywhere: manual `/compact` or automatic — shows a
+- Compaction anywhere: manual `/compact` or automatic, showing a
   live braille spinner and streams the summary into an expander
 - Slash commands in the composer: `/compact`, `/new`, `/diff`
   plus every server command (`/init`, `/review`, …) with a
@@ -237,7 +238,7 @@ entry (including the "New Session" action) works everywhere.
   picker; thumbnails in the composer and in history
 - File handling through XDG desktop portals (no direct file-chooser
   dialogs): workspace folder and image picking, opening the server
-  config in its default app, "Show in Files" for the workspace —
+  config in its default app, "Show in Files" for the workspace,
   the same code works sandboxed and unsandboxed
 - Context meter per session (input tokens vs model limit)
 - Session changes viewer (unified diffs per file)
