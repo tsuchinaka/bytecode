@@ -207,7 +207,6 @@ public class Composer : Gtk.Box {
             margin_top = 8,
             visible = false
         };
-        diff_row.append (diff_button);
         diff_editing_label = new Gtk.Label ("") {
             xalign = 0,
             ellipsize = Pango.EllipsizeMode.MIDDLE,
@@ -384,6 +383,14 @@ public class Composer : Gtk.Box {
             child = diff_scrolled
         };
         OpenClient.set_menu_popover (diff_button, diff_popover);
+
+        /* The row is built before this button exists (it has to sit
+         *  above the input), so the button joins it here. Appending it
+         *  while it was still null silently dropped the chip: the row
+         *  showed the edited file's name with nothing to open. */
+        if (diff_row != null) {
+            diff_row.prepend (diff_button);
+        }
 
         attach_button = new Gtk.Button.from_icon_name ("mail-attachment-symbolic") {
             tooltip_text = "Attach images (or paste and drop them here)",
