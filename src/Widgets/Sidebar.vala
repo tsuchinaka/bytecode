@@ -136,15 +136,17 @@ public class Sidebar : Gtk.Box {
                 row.set_header (null);
                 return;
             }
-            var section = section_of_id (((SidebarRow) row.get_child ()).session_id);
+            /* Header groups: Pinned first, then the status sections.
+             *  A pinned session is its own group no matter its status. */
+            var section = header_group ((SidebarRow) row.get_child ());
             int before_section = -1;
             if (before != null && before is Gtk.ListBoxRow
                 && ((Gtk.ListBoxRow) before).get_child () is SidebarRow) {
-                before_section = section_of_id (
-                    ((SidebarRow) ((Gtk.ListBoxRow) before).get_child ()).session_id);
+                before_section = header_group (
+                    (SidebarRow) ((Gtk.ListBoxRow) before).get_child ());
             }
             if (before == null || section != before_section) {
-                row.set_header (new Granite.HeaderLabel (section_title (section)) {
+                row.set_header (new Granite.HeaderLabel (header_group_title (section)) {
                     margin_start = 12,
                     margin_end = 12,
                     margin_top = 6
@@ -359,17 +361,14 @@ public class Sidebar : Gtk.Box {
             }
         }
         if (filter_mode == FilterMode.ALL) {
-            /* Group the All slice into Needs input / Working / Recent
-             * so live sessions surface structurally, not just by
-             * spinner. Stable within each group (pinned first, then
-             * server order). */
+            /* A pinned session is pinned: it keeps the top of the list
+             * whatever it is doing, so it forms its own group above the
+             * status sections. The rest are grouped into Needs input /
+             * Working / Recent, stable within each group (server
+             * order). */
             var grouped = new Gee.ArrayList<Session> ();
+            grouped.add_all (pinned_first);
             for (int section = 0; section <= 2; section++) {
-                foreach (var session in pinned_first) {
-                    if (section_of_session (session) == section) {
-                        grouped.add (session);
-                    }
-                }
                 foreach (var session in wanted) {
                     if (section_of_session (session) == section) {
                         grouped.add (session);
@@ -855,11 +854,23 @@ public class Sidebar : Gtk.Box {
         return section_of (row_statuses.has_key (session_id) ? row_statuses[session_id] : "idle");
     }
 
-    private string section_title (int section) {
-        switch (section) {
+    /** Header group for a row: 0 for pinned, otherwise one past the
+     *  status section, so the groups stack Pinned, Needs input,
+     *  Working, Recent. */
+    private int header_group (SidebarRow row) {
+        if (row.pinned) {
+            return 0;
+        }
+        return 1 + section_of_id (row.session_id);
+    }
+
+    private string header_group_title (int group) {
+        switch (group) {
             case 0:
-                return "Needs input";
+                return "Pinned";
             case 1:
+                return "Needs input";
+            case 2:
                 return "Working";
             default:
                 return "Recent";
@@ -904,7 +915,9 @@ public class SidebarRow : Granite.ListItem {
     private string last_subtitle = "\x00sentinel";
     private string last_model = "\x00sentinel";
     private string? last_icon = null;
-    private bool last_pinned = false;
+    /** Whether this row's session is pinned. The sidebar reads it to
+     *  decide the row's header group. */
+    public bool pinned { get; private set; default = false; }
     /** The pin/archive pair the context menu was last built for, or -1
      *  while it has never been built. Without the sentinel a plain
      *  (unpinned, unarchived) row, the common case, would look
@@ -1156,9 +1169,9 @@ public class SidebarRow : Granite.ListItem {
             model_icon.tooltip_text = model_label;
             last_model = model_label;
         }
-        if (session.pinned != last_pinned) {
+        if (session.pinned != pinned) {
             pin_icon.visible = session.pinned;
-            last_pinned = session.pinned;
+            pinned = session.pinned;
         }
         /* Keep a live activity suffix across refreshes ("Title · Running"). */
         var dot = tooltip_text.index_of ("·");
