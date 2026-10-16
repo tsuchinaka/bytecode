@@ -3,3 +3,11 @@ build/
 # valac-generated C next to each .vala source
 *.vala.c
 *.vala.h
+
+# Local AI assistant notes: kept on disk, never part of the project
+AGENTS.md
+HANDOFF.md
+CLAUDE.md
+.agents/
+.claude/
+.cursor/
