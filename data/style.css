@@ -147,12 +147,59 @@ popover > contents {
 .system-divider {
   margin-top: 12px;
   margin-bottom: 12px;
+}
+
+/* Only the rule dims. The summary card that replaces it is content
+ *  and stays readable. */
+.system-divider-rule {
   opacity: 0.85;
 }
 
 .system-divider-label {
   font-size: 0.9em;
   font-weight: bold;
+}
+
+/* Compaction summary: a folded card in the conversation, in the same
+ * language as the tool cards, instead of a raw markdown dump behind an
+ * expander. */
+.summary-card {
+  background-color: alpha(@borders, 0.12);
+  border: 1px solid alpha(@borders, 0.28);
+  border-radius: 12px;
+}
+
+.summary-header {
+  border-radius: 12px;
+  padding: 0;
+}
+
+.summary-header:hover {
+  background-color: alpha(@theme_fg_color, 0.06);
+}
+
+.summary-title {
+  font-weight: bold;
+  font-size: 0.95em;
+}
+
+.summary-meta {
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
+/* The folded one-liner: enough to know what the summary holds. */
+.summary-preview {
+  font-size: 0.88em;
+  opacity: 0.62;
+}
+
+.summary-body {
+  font-size: 0.92em;
+}
+
+.summary-body-scroller {
+  border-top: 1px solid alpha(@borders, 0.22);
 }
 
 /* --------------------------------------------------------- sidebar */
