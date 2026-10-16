@@ -63,8 +63,10 @@ public class Composer : Gtk.Box {
     private Gtk.Button permission_mode_button;
     private string permission_mode = "ask";
     private BrailleSpinner busy_spinner;
-    private Gtk.Popover command_popover;
+    private Gtk.Revealer command_revealer;
     private Gtk.ListBox command_list;
+    /** True while the inline command list is showing. */
+    private bool commands_shown = false;
     private Gee.ArrayList<CommandInfo> commands;
     private Gtk.LevelBar context_bar;
     private Gtk.Label context_label;
@@ -83,9 +85,12 @@ public class Composer : Gtk.Box {
     /** Decoded 64px attachment thumbnails, keyed by file path, so
      *  re-listing the chips doesn't re-decode every image. */
     private Gee.HashMap<string, Gdk.Pixbuf?> thumbnail_cache;
-    /** Last query the slash-command popup was built for, so typing
-     *  that doesn't change it doesn't rebuild the rows. */
-    private string last_command_query = "\x00sentinel";
+    /** Last query the command list was built for, so typing that does
+     *  not change it does not rebuild the rows. Null means "never
+     *  built": the old sentinel started with NUL and was therefore the
+     *  empty string, which made the first "/" (an empty query) look
+     *  already built and show no list. */
+    private string? last_command_query = null;
     /** Last meter value/band/label written, so repeated usage events
      *  with the same numbers don't invalidate layout. */
     private double last_context_value = -1.0;
@@ -273,9 +278,9 @@ public class Composer : Gtk.Box {
             }
 
             /* Slash-command popup keyboard handling. */
-            if (command_popover.visible) {
+            if (commands_shown) {
                 if (keyval == Gdk.Key.Escape) {
-                    command_popover.popdown ();
+                    hide_commands ();
                     return true;
                 }
                 if (keyval == Gdk.Key.Down || keyval == Gdk.Key.Up) {
@@ -426,32 +431,40 @@ public class Composer : Gtk.Box {
         buttons.append (stop_button);
         buttons.append (send_button);
 
-        frame.append (overlay);
-        frame.append (context_row);
-        frame.append (buttons);
-        append (frame);
-
-        /* Slash-command popup, anchored above the input card. */
-        command_popover = new Gtk.Popover () {
-            position = Gtk.PositionType.TOP
-        };
+        /* Inline slash-command list: it lives in the card, right above
+         *  the input being typed into, instead of floating over the
+         *  conversation as a popup. */
         command_list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.SINGLE
         };
-        command_list.add_css_class ("picker-list");
+        command_list.add_css_class ("command-list");
         command_list.row_activated.connect ((row) => {
             var command_row = (CommandRow) row;
             execute_command_row (command_row.command);
         });
         var command_scrolled = new Gtk.ScrolledWindow () {
             hscrollbar_policy = Gtk.PolicyType.NEVER,
-            propagate_natural_width = true,
             propagate_natural_height = true,
-            max_content_height = 220,
+            max_content_height = 200,
             child = command_list
         };
-        command_popover.child = command_scrolled;
-        command_popover.set_parent (frame);
+        var command_panel = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        command_panel.add_css_class ("command-panel");
+        command_panel.append (command_scrolled);
+        command_revealer = new Gtk.Revealer () {
+            child = command_panel,
+            transition_type = Gtk.RevealerTransitionType.SLIDE_UP,
+            reveal_child = false,
+            margin_start = 12,
+            margin_end = 12,
+            margin_bottom = 6
+        };
+
+        frame.append (command_revealer);
+        frame.append (overlay);
+        frame.append (context_row);
+        frame.append (buttons);
+        append (frame);
     }
 
     public void set_server_commands (Gee.ArrayList<CommandInfo> server_commands) {
@@ -467,27 +480,50 @@ public class Composer : Gtk.Box {
             commands.add (command);
         }
         /* The row list is now stale: force a rebuild on the next
-         *  popup even if the query didn't change. */
-        last_command_query = "\x00sentinel";
+         *  show even if the query did not change. */
+        last_command_query = null;
     }
 
+    /** Shows the inline list while the input starts with a slash and
+     *  something matches what has been typed so far. */
     private void update_command_popup () {
         var text = text_view.buffer.text;
         if (!text.has_prefix ("/") || text.contains ("\n")) {
-            command_popover.popdown ();
+            hide_commands ();
             return;
         }
-        var query = text.substring (1).split (" ")[0].down ();
+        var typed = text.substring (1);
+        /* The query is everything up to the first space. Splitting an
+         *  empty string (just "/" typed) yields no element at all, which
+         *  used to hand a null to the filter. */
+        var space = typed.index_of_char (' ');
+        var query = (space < 0 ? typed : typed.substring (0, space)).down ();
         rebuild_command_list (query);
         if (command_list.get_row_at_index (0) != null) {
-            command_popover.popup ();
+            show_commands ();
         } else {
-            command_popover.popdown ();
+            hide_commands ();
         }
     }
 
+    private void show_commands () {
+        if (commands_shown) {
+            return;
+        }
+        commands_shown = true;
+        command_revealer.reveal_child = true;
+    }
+
+    private void hide_commands () {
+        if (!commands_shown) {
+            return;
+        }
+        commands_shown = false;
+        command_revealer.reveal_child = false;
+    }
+
     private void rebuild_command_list (string query) {
-        if (query == last_command_query) {
+        if (last_command_query != null && query == last_command_query) {
             return;
         }
         last_command_query = query;
@@ -538,7 +574,7 @@ public class Composer : Gtk.Box {
     }
 
     private void execute_command_row (CommandInfo command) {
-        command_popover.popdown ();
+        hide_commands ();
         text_view.buffer.text = "";
         command_requested (command.name, "");
     }
@@ -1062,14 +1098,15 @@ public class CommandRow : Gtk.ListBoxRow {
         this.command = command;
 
         var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 10) {
-            margin_top = 6,
-            margin_bottom = 6,
-            margin_start = 6,
-            margin_end = 6
+            margin_top = 5,
+            margin_bottom = 5,
+            margin_start = 10,
+            margin_end = 10
         };
 
         var name_label = new Gtk.Label (@"/$(command.name)") {
-            xalign = 0
+            xalign = 0,
+            valign = Gtk.Align.CENTER
         };
         name_label.add_css_class (Granite.CssClass.MONOSPACE);
         box.append (name_label);
@@ -1077,7 +1114,8 @@ public class CommandRow : Gtk.ListBoxRow {
         var description_label = new Gtk.Label (command.description) {
             xalign = 0,
             hexpand = true,
-            ellipsize = Pango.EllipsizeMode.END
+            ellipsize = Pango.EllipsizeMode.END,
+            valign = Gtk.Align.CENTER
         };
         description_label.add_css_class (Granite.CssClass.DIM);
         description_label.add_css_class ("caption");
