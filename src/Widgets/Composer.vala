@@ -220,8 +220,8 @@ public class Composer : Gtk.Box {
 
         text_view = new Gtk.TextView () {
             wrap_mode = Gtk.WrapMode.WORD_CHAR,
-            top_margin = 10,
-            bottom_margin = 10,
+            top_margin = 6,
+            bottom_margin = 6,
             left_margin = 14,
             right_margin = 14,
             accepts_tab = false
@@ -235,7 +235,7 @@ public class Composer : Gtk.Box {
             hscrollbar_policy = Gtk.PolicyType.NEVER,
             vscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
             propagate_natural_height = true,
-            min_content_height = 48,
+            min_content_height = 32,
             max_content_height = 150,
             child = text_view
         };
@@ -432,7 +432,9 @@ public class Composer : Gtk.Box {
             tooltip_text = "Permission mode (click to cycle)",
             valign = Gtk.Align.CENTER
         };
-        permission_mode_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+        /* No flat class: the theme's flat styling wipes the chip fill
+         *  this row shares, leaving the mode button bare next to the
+         *  pickers. The composer-chip rule already removes the shadow. */
         permission_mode_button.add_css_class ("composer-chip");
         permission_mode_button.clicked.connect (() => cycle_permission_mode ());
         update_permission_mode_button ();
