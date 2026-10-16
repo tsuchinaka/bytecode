@@ -27,7 +27,7 @@ public class ModelChooser : Gtk.Box {
         models = new Gee.ArrayList<ModelInfo> ();
 
         button = new Gtk.MenuButton ();
-        button.add_css_class ("flat");
+        button.add_css_class (Granite.STYLE_CLASS_FLAT);
         button.tooltip_text = "Choose model and thinking level";
 
         var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
@@ -46,7 +46,7 @@ public class ModelChooser : Gtk.Box {
 
         var list_page = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
         search = new Gtk.SearchEntry () {
-            placeholder_text = "Search models…",
+            placeholder_text = "Search models",
             margin_top = 8,
             margin_bottom = 4,
             margin_start = 8,
@@ -58,7 +58,6 @@ public class ModelChooser : Gtk.Box {
         list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.NONE
         };
-        list.add_css_class ("rich-list");
         list.add_css_class ("picker-list");
         list.row_activated.connect ((row) => {
             on_model_activated ((ModelRow) row);
@@ -80,7 +79,7 @@ public class ModelChooser : Gtk.Box {
         popover = new Gtk.Popover () {
             child = list_page
         };
-        button.popover = popover;
+        OpenClient.set_menu_popover (button, popover);
 
         button.notify["active"].connect (() => {
             if (button.active) {
@@ -213,7 +212,7 @@ public class ModelRow : Gtk.ListBoxRow {
             ellipsize = Pango.EllipsizeMode.END,
             max_width_chars = 34
         };
-        detail_label.add_css_class ("dim-label");
+        detail_label.add_css_class (Granite.CssClass.DIM);
         detail_label.add_css_class ("caption");
         texts.append (detail_label);
 

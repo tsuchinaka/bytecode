@@ -35,7 +35,6 @@ public class DiffDialog : Gtk.Window {
         list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.NONE
         };
-        list.add_css_class ("rich-list");
 
         var scrolled = new Gtk.ScrolledWindow () {
             vexpand = true,
@@ -122,7 +121,7 @@ public class DiffRow : Gtk.ListBoxRow {
             xalign = 0,
             selectable = true
         };
-        patch_label.add_css_class ("monospace");
+        patch_label.add_css_class (Granite.CssClass.MONOSPACE);
         patch_label.add_css_class ("diff-patch");
         expander.child = patch_label;
 

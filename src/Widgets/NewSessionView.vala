@@ -44,14 +44,17 @@ public class NewSessionView : Gtk.Box {
     private Gtk.Revealer attachments_revealer;
     private Gtk.FlowBox attachments_box;
     private Gee.ArrayList<Attachment> attachments;
+    /** Decoded 64px attachment thumbnails, keyed by file path, so
+     *  re-listing the chips doesn't re-decode every image. */
+    private Gee.HashMap<string, Gdk.Pixbuf?> thumbnail_cache;
 
     private const string[] SUGGESTIONS = {
-        "Explore the codebase",
-        "Catch me up",
-        "Weigh my options",
-        "Start feature planning",
-        "Debug an issue",
-        "Review my changes"
+        "Explore the Codebase",
+        "Catch Me Up",
+        "Weigh My Options",
+        "Start Feature Planning",
+        "Debug an Issue",
+        "Review My Changes"
     };
 
     /* Full-color elementary action icons, one per suggestion. */
@@ -74,6 +77,7 @@ public class NewSessionView : Gtk.Box {
         add_css_class (Granite.STYLE_CLASS_VIEW);
 
         attachments = new Gee.ArrayList<Attachment> ();
+        thumbnail_cache = new Gee.HashMap<string, Gdk.Pixbuf?> ();
 
         var column = new Gtk.Box (Gtk.Orientation.VERTICAL, 14) {
             halign = Gtk.Align.CENTER,
@@ -87,8 +91,10 @@ public class NewSessionView : Gtk.Box {
             margin_end = 24
         };
 
-        /* -- Page title and a short explanation. -- */
-        var title_label = new Gtk.Label ("What are we working on?") {
+        /* -- Page title and a short explanation. Title case (AP style)
+         *  for the H1 heading; the subtitle is descriptive text, so it
+         *  stays sentence case (see hig/reference/text.md). -- */
+        var title_label = new Gtk.Label ("What Are We Working On?") {
             xalign = 0.5f,
             wrap = true,
             justify = Gtk.Justification.CENTER
@@ -137,7 +143,6 @@ public class NewSessionView : Gtk.Box {
         recent_list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.NONE
         };
-        recent_list.add_css_class ("rich-list");
         recent_list.row_activated.connect ((row) => {
             var path = ((RecentFolderRow) row).directory;
             if (path == "") {
@@ -160,9 +165,9 @@ public class NewSessionView : Gtk.Box {
         folder_button = new Gtk.MenuButton () {
             child = folder_box,
             halign = Gtk.Align.FILL,
-            hexpand = true,
-            popover = folder_popover
+            hexpand = true
         };
+        OpenClient.set_menu_popover (folder_button, folder_popover);
         folder_button.tooltip_text = "Workspace folder for this session (required)";
         rebuild_recent_rows ();
         column.append (folder_button);
@@ -218,7 +223,9 @@ public class NewSessionView : Gtk.Box {
             child = text_view
         };
 
-        placeholder_label = new Gtk.Label ("Plan, build, or ask…  (paste or drop images to attach)") {
+        /* No ellipsis in placeholder text per hig/reference/text.md —
+         *  it adds no value there. */
+        placeholder_label = new Gtk.Label ("Plan, build, or ask (paste or drop images to attach)") {
             xalign = 0,
             yalign = 0,
             halign = Gtk.Align.START,
@@ -238,7 +245,7 @@ public class NewSessionView : Gtk.Box {
 
         /* Drop target for images */
         var drop_target = new Gtk.DropTarget (typeof (Gdk.FileList), Gdk.DragAction.COPY);
-        drop_target.on_drop.connect ((value, x, y) => on_files_dropped (value));
+        drop_target.drop.connect ((value, x, y) => on_files_dropped (value));
         text_view.add_controller (drop_target);
 
         /* Paste target for images. Capture phase so this runs before
@@ -486,25 +493,22 @@ public class NewSessionView : Gtk.Box {
         /* Some file managers only advertise text/uri-list. Read it and
          * attach the image files it points at. */
         if (formats.contain_mime_type ("text/uri-list")) {
-            clipboard.read_async.begin (
-                new string[] { "text/uri-list" },
-                GLib.Priority.DEFAULT,
-                null,
-                (obj, res) => {
-                    try {
-                        string mime = "";
-                        var stream = clipboard.read_async.end (res, out mime);
-                        if (stream != null) {
-                            ingest_uri_list (stream);
-                        }
-                    } catch (Error e) {
-                        warning ("Paste URI list failed: %s", e.message);
-                    }
-                }
-            );
+            read_clipboard_uri_list.begin (clipboard);
             return true;
         }
         return false;
+    }
+
+    /** Reads a uri-list from the clipboard and ingests it. */
+    private async void read_clipboard_uri_list (Gdk.Clipboard clipboard) {
+        try {
+            var stream = yield OpenClient.clipboard_read_stream (clipboard, "text/uri-list");
+            if (stream != null) {
+                ingest_uri_list (stream);
+            }
+        } catch (Error e) {
+            warning ("Paste URI list failed: %s", e.message);
+        }
     }
 
     private void ingest_uri_list (GLib.InputStream stream) {
@@ -561,19 +565,17 @@ public class NewSessionView : Gtk.Box {
             return;
         }
 
-        SourceFunc callback = attach_file_async.callback;
         string? mime = null;
 
         /* MIME sniffing hits the disk; keep it off the main thread. */
-        Work.submit (() => {
+        Work.submit_with_resume (() => {
             try {
                 var info = file.query_info ("standard::content-type", GLib.FileQueryInfoFlags.NONE);
                 mime = info.get_content_type ();
             } catch (Error e) {
                 warning ("Could not read %s: %s", path, e.message);
             }
-            Work.resume (callback);
-        });
+        }, attach_file_async.callback);
 
         yield;
 
@@ -618,6 +620,13 @@ public class NewSessionView : Gtk.Box {
         });
     }
 
+    /** Shows a decoded pixbuf in an image widget. Gtk.Image's pixbuf
+     *  setter was deprecated in GTK 4.12 in favour of taking a
+     *  Gdk.Paintable, so the pixbuf is wrapped once. */
+    private static void set_picture (Gtk.Image image, Gdk.Pixbuf pixbuf) {
+        image.set_from_paintable (pixbuf_texture (pixbuf));
+    }
+
     private void rebuild_attachment_chips () {
         Gtk.Widget? child = attachments_box.get_first_child ();
         while (child != null) {
@@ -657,19 +666,27 @@ public class NewSessionView : Gtk.Box {
 
             /* Decode the thumbnail off the main thread, then swap it in. */
             var path = attachment.path;
-            Work.submit (() => {
-                Gdk.Pixbuf? pixbuf = null;
-                try {
-                    pixbuf = new Gdk.Pixbuf.from_file_at_scale (path, 64, 64, true);
-                } catch (Error e) {
+            if (thumbnail_cache.has_key (path)) {
+                var cached = thumbnail_cache[path];
+                if (cached != null) {
+                    set_picture (thumbnail, cached);
                 }
-                Idle.add (() => {
-                    if (pixbuf != null) {
-                        thumbnail.set_from_pixbuf (pixbuf);
+            } else {
+                Work.submit (() => {
+                    Gdk.Pixbuf? pixbuf = null;
+                    try {
+                        pixbuf = new Gdk.Pixbuf.from_file_at_scale (path, 64, 64, true);
+                    } catch (Error e) {
                     }
-                    return false;
+                    thumbnail_cache[path] = pixbuf;
+                    Idle.add (() => {
+                        if (pixbuf != null) {
+                            set_picture (thumbnail, pixbuf);
+                        }
+                        return false;
+                    });
                 });
-            });
+            }
         }
 
         attachments_revealer.reveal_child = attachments.size > 0;
@@ -770,7 +787,7 @@ public class RecentFolderRow : Gtk.ListBoxRow {
             ellipsize = Pango.EllipsizeMode.START,
             max_width_chars = 40
         };
-        path_label.add_css_class ("dim-label");
+        path_label.add_css_class (Granite.CssClass.DIM);
         path_label.add_css_class ("caption");
         texts.append (path_label);
         row_box.append (texts);

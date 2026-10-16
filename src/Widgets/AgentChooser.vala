@@ -24,7 +24,7 @@ public class AgentChooser : Gtk.Box {
         agents = new Gee.ArrayList<AgentInfo> ();
 
         button = new Gtk.MenuButton ();
-        button.add_css_class ("flat");
+        button.add_css_class (Granite.STYLE_CLASS_FLAT);
         button.tooltip_text = "Permissions mode (agent)";
 
         var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
@@ -44,7 +44,6 @@ public class AgentChooser : Gtk.Box {
         list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.NONE
         };
-        list.add_css_class ("rich-list");
         list.add_css_class ("picker-list");
         list.row_activated.connect ((row) => {
             var agent_row = (AgentRow) row;
@@ -62,7 +61,7 @@ public class AgentChooser : Gtk.Box {
         popover = new Gtk.Popover () {
             child = scrolled
         };
-        button.popover = popover;
+        OpenClient.set_menu_popover (button, popover);
 
         button.notify["active"].connect (() => {
             if (button.active) {
@@ -149,7 +148,7 @@ public class AgentRow : Gtk.ListBoxRow {
                 lines = 3,
                 ellipsize = Pango.EllipsizeMode.END
             };
-            description_label.add_css_class ("dim-label");
+            description_label.add_css_class (Granite.CssClass.DIM);
             description_label.add_css_class ("caption");
             texts.append (description_label);
         }

@@ -24,7 +24,7 @@ public class VariantChooser : Gtk.Box {
         variants = new Gee.ArrayList<string> ();
 
         button = new Gtk.MenuButton ();
-        button.add_css_class ("flat");
+        button.add_css_class (Granite.STYLE_CLASS_FLAT);
         button.tooltip_text = "Thinking level";
 
         var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
@@ -45,7 +45,6 @@ public class VariantChooser : Gtk.Box {
         list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.NONE
         };
-        list.add_css_class ("rich-list");
         list.add_css_class ("picker-list");
         list.row_activated.connect ((row) => {
             var variant_row = (VariantRow) row;
@@ -63,7 +62,7 @@ public class VariantChooser : Gtk.Box {
         popover = new Gtk.Popover () {
             child = scrolled
         };
-        button.popover = popover;
+        OpenClient.set_menu_popover (button, popover);
 
         button.notify["active"].connect (() => {
             if (button.active) {
@@ -129,7 +128,7 @@ public class VariantRow : Gtk.ListBoxRow {
             var hint = new Gtk.Label ("thinking disabled") {
                 xalign = 1
             };
-            hint.add_css_class ("dim-label");
+            hint.add_css_class (Granite.CssClass.DIM);
             hint.add_css_class ("caption");
             box.append (hint);
         }
