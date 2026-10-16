@@ -16,6 +16,18 @@ public class Config : GLib.Object {
     public string host { get; set; default = "127.0.0.1"; }
     public uint port { get; set; default = 4096; }
     public string password { get; set; default = ""; }
+    /** The app starts and owns its own `opencode serve`: a dedicated
+     *  port and passcode, so there is no manual pairing to do. */
+    public bool manage_server { get; set; default = true; }
+    /** Command used to start that server (a name on PATH or a path). */
+    public string server_command { get; set; default = "opencode"; }
+    /** Port for the app's own server. Moved to the next free port when
+     *  something else holds it. */
+    public uint server_port { get; set; default = 4599; }
+    /** Passcode for the app's own server, generated on first use. Kept
+     *  so a server started by an earlier run can be re-adopted (and so
+     *  the TUI can be pointed at the same port with the same secret). */
+    public string server_password { get; set; default = ""; }
     /** Default workspace/codebase directory used when opening sessions. */
     public string workspace_directory { get; set; default = ""; }
     /** Desktop bubbles for turns, permissions and questions. */
@@ -48,12 +60,55 @@ public class Config : GLib.Object {
         return GLib.Path.build_filename (config_dir (), CONFIG_FILE_NAME);
     }
 
+    /** Where the app keeps its own server's log (and other run state). */
+    public static string state_dir () {
+        var state_base = GLib.Environment.get_user_state_dir ();
+        return GLib.Path.build_filename (state_base, CONFIG_DIR_NAME);
+    }
+
+    /** The connection the app actually uses: the server it manages, or
+     *  the manually configured one. */
+    public string effective_host {
+        owned get {
+            return manage_server ? "127.0.0.1" : host;
+        }
+    }
+
+    public uint effective_port {
+        get {
+            return manage_server ? server_port : port;
+        }
+    }
+
+    public string effective_password {
+        owned get {
+            return manage_server ? server_password : password;
+        }
+    }
+
+    /** True when a connection can be attempted at all. */
+    public bool has_connection {
+        get {
+            return manage_server ? true : password != "";
+        }
+    }
+
+    /** Generates the app server's passcode once and keeps it. */
+    public void ensure_server_password () {
+        if (server_password == "") {
+            server_password = GLib.Uuid.string_random ();
+        }
+    }
+
     public static Config load () {
         var config = new Config ();
 
         var env_password = GLib.Environment.get_variable ("OPENCODE_PASSWORD");
         if (env_password != null) {
             config.password = env_password;
+            /* In managed mode the same variable is what the server will
+             *  be told to use, so honour it there too. */
+            config.server_password = env_password;
         }
         var env_host = GLib.Environment.get_variable ("OPENCODE_HOST");
         if (env_host != null) {
@@ -89,6 +144,32 @@ public class Config : GLib.Object {
                     var stored = key_file.get_string ("connection", "password");
                     if (stored != "") {
                         config.password = stored;
+                    }
+                }
+            }
+            if (key_file.has_group ("server")) {
+                if (key_file.has_key ("server", "managed")) {
+                    try {
+                        config.manage_server = key_file.get_boolean ("server", "managed");
+                    } catch (Error e) {
+                    }
+                }
+                if (key_file.has_key ("server", "command")) {
+                    var command = key_file.get_string ("server", "command");
+                    if (command.strip () != "") {
+                        config.server_command = command.strip ();
+                    }
+                }
+                if (key_file.has_key ("server", "port")) {
+                    var server_port = key_file.get_integer ("server", "port");
+                    if (server_port > 0 && server_port <= 65535) {
+                        config.server_port = (uint) server_port;
+                    }
+                }
+                if (key_file.has_key ("server", "password")) {
+                    var stored = key_file.get_string ("server", "password");
+                    if (stored != "" && config.server_password == "") {
+                        config.server_password = stored;
                     }
                 }
             }
@@ -175,6 +256,10 @@ public class Config : GLib.Object {
         key_file.set_string ("connection", "host", host);
         key_file.set_integer ("connection", "port", (int) port);
         key_file.set_string ("connection", "password", password);
+        key_file.set_boolean ("server", "managed", manage_server);
+        key_file.set_string ("server", "command", server_command);
+        key_file.set_integer ("server", "port", (int) server_port);
+        key_file.set_string ("server", "password", server_password);
         key_file.set_string ("ui", "workspace-directory", workspace_directory);
         key_file.set_boolean ("ui", "notifications-enabled", notifications_enabled);
         key_file.set_boolean ("ui", "notify-turns", notify_turns);
@@ -204,9 +289,10 @@ public class Config : GLib.Object {
         });
     }
 
+    /** The URL the app connects to (managed server, or the manual one). */
     public string base_url {
         owned get {
-            return @"http://$host:$port";
+            return @"http://$(effective_host):$(effective_port)";
         }
     }
 }
