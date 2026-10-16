@@ -140,12 +140,7 @@ public class ChatView : Gtk.Box {
 
     public void clear () {
         hide_pending ();
-        Gtk.Widget? child = message_box.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            message_box.remove (child);
-            child = next;
-        }
+        clear_box (message_box);
         bubbles.clear ();
         dividers.clear ();
         user_bubbles.clear ();
@@ -323,12 +318,7 @@ public class ChatView : Gtk.Box {
                 return;
             }
             /* Live arrival (not a history rebuild): play the entrance. */
-            divider.add_css_class ("chat-arrive");
-            pin_pending_last ();
-            if (!force_scroll) {
-                pending_top_widget = divider;
-            }
-            scroll_to_bottom (force_scroll);
+            arrive (divider, divider, force_scroll);
             return;
         }
 
@@ -339,12 +329,7 @@ public class ChatView : Gtk.Box {
             if (bulk_loading) {
                 return;
             }
-            user_bubble.add_css_class ("chat-arrive");
-            pin_pending_last ();
-            if (!force_scroll) {
-                pending_top_widget = user_bubble;
-            }
-            scroll_to_bottom (force_scroll);
+            arrive (user_bubble, user_bubble, force_scroll);
             return;
         }
 
@@ -354,10 +339,17 @@ public class ChatView : Gtk.Box {
         if (bulk_loading) {
             return;
         }
-        bubble.add_css_class ("chat-arrive");
+        arrive (bubble, bubble, force_scroll);
+    }
+
+    /** Live arrival (not a history rebuild): plays the entrance,
+     *  keeps the pending footer last, and follows the stream down
+     *  unless this arrival forces the scroll itself. */
+    private void arrive (Gtk.Widget widget, Gtk.Widget top, bool force_scroll = false) {
+        widget.add_css_class ("chat-arrive");
         pin_pending_last ();
         if (!force_scroll) {
-            pending_top_widget = bubble;
+            pending_top_widget = top;
         }
         scroll_to_bottom (force_scroll);
     }
@@ -400,10 +392,7 @@ public class ChatView : Gtk.Box {
             dividers[divider_id] = divider;
             message_box.append (divider);
             /* Live dividers enter like history-added ones. */
-            divider.add_css_class ("chat-arrive");
-            pin_pending_last ();
-            pending_top_widget = divider;
-            scroll_to_bottom ();
+            arrive (divider, divider);
             return;
         }
         divider.set_status (icon_name, text, status);
@@ -449,10 +438,7 @@ public class ChatView : Gtk.Box {
         if (!is_new || bulk_loading) {
             return;
         }
-        card.add_css_class ("chat-arrive");
-        pin_pending_last ();
-        pending_top_widget = card;
-        scroll_to_bottom ();
+        arrive (card, card);
     }
 
     /** Records the model a message belongs to; applied when its bubble appears. */
@@ -484,12 +470,9 @@ public class ChatView : Gtk.Box {
         message_box.append (bubble);
         /* A streamed turn opening its bubble: same entrance as any
          *  other live arrival. */
-        bubble.add_css_class ("chat-arrive");
         /* Streamed content must never bury the footer: it stays
          * pinned at the very bottom until the turn ends. */
-        pin_pending_last ();
-        pending_top_widget = bubble;
-        scroll_to_bottom ();
+        arrive (bubble, bubble);
         return bubble;
     }
 

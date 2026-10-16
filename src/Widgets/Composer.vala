@@ -549,12 +549,7 @@ public class Composer : Gtk.Box {
         }
         last_command_query = query;
 
-        Gtk.Widget? child = command_list.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            command_list.remove (child);
-            child = next;
-        }
+        clear_list (command_list);
 
         Gtk.ListBoxRow? first = null;
         foreach (var command in commands) {
@@ -698,15 +693,6 @@ public class Composer : Gtk.Box {
         };
         label.add_css_class (css_class);
         return label;
-    }
-
-    private static void clear_box (Gtk.Box box) {
-        Gtk.Widget? child = box.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            box.remove (child);
-            child = next;
-        }
     }
 
     public void set_context (double fraction, string label) {
@@ -983,12 +969,7 @@ public class Composer : Gtk.Box {
     }
 
     private void rebuild_attachment_chips () {
-        Gtk.Widget? child = attachments_box.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            attachments_box.remove (child);
-            child = next;
-        }
+        clear_flow (attachments_box);
 
         foreach (var attachment in attachments) {
             var chip = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);

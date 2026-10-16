@@ -87,8 +87,7 @@ public class MessageBubble : Gtk.Box {
         rendered_blocks = new Gee.ArrayList<Markdown.Block> ();
         block_widgets = new Gee.ArrayList<Gtk.Widget> ();
         if (message.created > 0) {
-            var time = new DateTime.from_unix_local (message.created / 1000);
-            tooltip_text = time.format ("%Y-%m-%d %H:%M");
+            tooltip_text = message.date_stamp;
         }
 
         content = new Gtk.Box (Gtk.Orientation.VERTICAL, 6) {
@@ -105,9 +104,7 @@ public class MessageBubble : Gtk.Box {
          *  live turns learn the model from the event stream, history
          *  from the message itself, and an unknown model falls back to
          *  the time so the line never disappears between the two. */
-        var stamp = message.created > 0
-            ? new DateTime.from_unix_local (message.created / 1000).format ("%H:%M")
-            : "";
+        var stamp = message.time_stamp;
         var model = message.model;
         if (model != "") {
             meta_label.label = @"Assistant · $model";
@@ -526,12 +523,7 @@ public class MessageBubble : Gtk.Box {
             return;
         }
 
-        Gtk.Widget? child = text_box.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            text_box.remove (child);
-            child = next;
-        }
+        clear_box (text_box);
         rendered_blocks.clear ();
         block_widgets.clear ();
 

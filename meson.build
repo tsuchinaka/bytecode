@@ -77,6 +77,7 @@ executable(
   'src/Utils/Markdown.vala',
   'src/Utils/Work.vala',
   'src/Utils/Portals.vala',
+  'src/Utils/WidgetUtil.vala',
   'src/Widgets/ChatView.vala',
   'src/Widgets/BlockView.vala',
   'src/Widgets/AttachmentView.vala',
