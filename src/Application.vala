@@ -18,15 +18,25 @@ public class Application : Gtk.Application {
     public Store store;
     /** Owns the `opencode serve` process the app runs for itself. */
     public ServerProcess server;
+    /** The single window. Kept so a second launch (a click on a
+     *  notification, the desktop entry, `--new-session`) reuses it
+     *  instead of building another one. */
+    private MainWindow? window = null;
 
     public Application () {
         Object (
             application_id: "io.github.haruki.openclient",
-            flags: ApplicationFlags.DEFAULT_FLAGS
+            /* The command line is handled here so the "New Session"
+             * desktop action lands in the running instance. */
+            flags: ApplicationFlags.DEFAULT_FLAGS | ApplicationFlags.HANDLES_COMMAND_LINE
         );
     }
 
-    protected override void activate () {
+    /** One-time setup, before the first activate: stylesheet, theme,
+     *  config, server, store and the app-wide actions. */
+    protected override void startup () {
+        base.startup ();
+
         var display = Gdk.Display.get_default ();
         if (display != null) {
             var css = new Gtk.CssProvider ();
@@ -81,8 +91,53 @@ public class Application : Gtk.Application {
         reject.activate.connect ((target) => reply_notification_permission (target, "reject"));
         add_action (reject);
 
-        var window = new MainWindow (this);
+        /* Clicking a notification's body focuses the session it is
+         *  about, in the window that is already open. */
+        var focus = new GLib.SimpleAction ("focus-session", VariantType.STRING);
+        focus.activate.connect ((target) => {
+            if (target == null) {
+                return;
+            }
+            var session_id = target.get_string ();
+            present_window ();
+            if (session_id != "" && store != null) {
+                store.open_session.begin (session_id);
+            }
+        });
+        add_action (focus);
+    }
+
+    /** Shows the window, creating it on first use. Never builds a
+     *  second one: a relaunch or a notification click lands here. */
+    private void present_window () {
+        if (window == null) {
+            window = new MainWindow (this);
+        }
         window.present ();
+    }
+
+    protected override void activate () {
+        present_window ();
+    }
+
+    /** Command line, forwarded here from a second process by D-Bus:
+     *  the running instance handles it instead of a new window being
+     *  opened. */
+    protected override int command_line (GLib.ApplicationCommandLine command_line) {
+        present_window ();
+
+        var new_session = false;
+        foreach (var argument in command_line.get_arguments ()) {
+            if (argument == "--new-session") {
+                new_session = true;
+            }
+        }
+        if (new_session && window != null) {
+            window.open_new_session ();
+        }
+
+        command_line.set_exit_status (0);
+        return 0;
     }
 
     /** Brings the connection up: the app's own server first (managed

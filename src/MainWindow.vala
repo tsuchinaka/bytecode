@@ -863,6 +863,10 @@ public class MainWindow : Gtk.ApplicationWindow {
                     notification.set_icon (new ThemedIcon ("dialog-warning"));
                     notification.add_button ("Allow once", @"app.allow-permission::'$(request.id)'");
                     notification.add_button ("Reject", @"app.reject-permission::'$(request.id)'");
+                    /* Body click focuses this session in the window
+                     * that is already open. */
+                    notification.set_default_action_and_target_value (
+                        "app.focus-session", new Variant.string (session_id));
                     app.send_notification (@"perm-$session_id", notification);
                 }
             } else {
@@ -882,6 +886,8 @@ public class MainWindow : Gtk.ApplicationWindow {
                     var notification = new GLib.Notification ("Input needed");
                     notification.set_body (@"$(session_title (session_id)): $(form.title)");
                     notification.set_icon (new ThemedIcon ("dialog-question"));
+                    notification.set_default_action_and_target_value (
+                        "app.focus-session", new Variant.string (session_id));
                     app.send_notification (@"question-$session_id", notification);
                 }
             } else {
@@ -1021,6 +1027,8 @@ public class MainWindow : Gtk.ApplicationWindow {
         var title = session_title (session_id);
         notification.set_body (title != "" ? @"Ready in $title" : "The model finished its turn");
         notification.set_icon (new ThemedIcon (failed ? "dialog-error" : "process-completed"));
+        notification.set_default_action_and_target_value (
+            "app.focus-session", new Variant.string (session_id));
         app.send_notification (@"turn-$session_id", notification);
     }
 
@@ -1213,6 +1221,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         if (yield Portals.save_file (@"Export $title", filename, text)) {
             app.store.notice ("Session exported");
         }
+    }
+
+    /** Opens the new-session page in this window. Called by the app
+     *  when a second launch passes `--new-session`. */
+    public void open_new_session () {
+        show_new_session ();
     }
 
     /** Confirms (once, for the whole batch) and deletes several
