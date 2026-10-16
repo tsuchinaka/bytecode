@@ -11,18 +11,25 @@ public class DiffDialog : Gtk.Window {
     private Gtk.ListBox list;
     private Gtk.Spinner spinner;
     private Gtk.Stack stack;
+    private Gtk.Label summary_label;
 
     public DiffDialog (Gtk.Window parent, string session_title) {
         Object (
             transient_for: parent,
             modal: false,
             title: @"Changes · $session_title",
-            default_width: 720,
-            default_height: 520
+            default_width: 760,
+            default_height: 560
         );
 
         var header = new Gtk.HeaderBar ();
         set_titlebar (header);
+
+        summary_label = new Gtk.Label ("") {
+            valign = Gtk.Align.CENTER
+        };
+        summary_label.add_css_class ("caption");
+        header.pack_start (summary_label);
 
         spinner = new Gtk.Spinner () {
             spinning = true,
@@ -33,7 +40,8 @@ public class DiffDialog : Gtk.Window {
         };
 
         list = new Gtk.ListBox () {
-            selection_mode = Gtk.SelectionMode.NONE
+            selection_mode = Gtk.SelectionMode.NONE,
+            show_separators = true
         };
 
         var scrolled = new Gtk.ScrolledWindow () {
@@ -58,6 +66,16 @@ public class DiffDialog : Gtk.Window {
             list.remove (child);
             child = next;
         }
+
+        var additions = 0;
+        var deletions = 0;
+        foreach (var diff in diffs) {
+            additions += diff.additions;
+            deletions += diff.deletions;
+        }
+        summary_label.label = diffs.size > 0
+            ? @"$(diffs.size) files · +$additions −$deletions"
+            : "";
 
         if (diffs.size == 0) {
             var placeholder = new Granite.Placeholder ("No changes yet") {
@@ -106,28 +124,91 @@ public class DiffRow : Gtk.ListBoxRow {
         path_label.add_css_class ("heading");
         header.append (path_label);
 
-        var stat_label = new Gtk.Label (diff.summary) {
+        /* Additions and deletions are separate labels so each can carry
+         * its own colour, the way diff tools show them. */
+        var add_label = new Gtk.Label (@"+$(diff.additions)") {
             valign = Gtk.Align.CENTER
         };
-        stat_label.add_css_class ("diff-stat");
-        header.append (stat_label);
+        add_label.add_css_class ("diff-add");
+        header.append (add_label);
 
-        var expander = new Gtk.Expander ("Patch") {
+        var del_label = new Gtk.Label (@"−$(diff.deletions)") {
+            valign = Gtk.Align.CENTER
+        };
+        del_label.add_css_class ("diff-del");
+        header.append (del_label);
+
+        var expander = new Gtk.Expander ("Diff") {
             margin_start = 6,
             margin_end = 6,
             margin_bottom = 6
         };
-        var patch_label = new Gtk.Label (diff.patch) {
-            xalign = 0,
-            selectable = true
-        };
-        patch_label.add_css_class (Granite.CssClass.MONOSPACE);
-        patch_label.add_css_class ("diff-patch");
-        expander.child = patch_label;
+        expander.child = new DiffPatchView (diff.patch);
 
         box.append (header);
         box.append (expander);
         child = box;
+    }
+}
+
+/** A unified patch, one line per row so each line can be coloured:
+ *  additions green, deletions red, hunk headers accented and context
+ *  dim. Lines are capped so a huge patch cannot flood the widget
+ *  tree. */
+public class DiffPatchView : Gtk.Box {
+    private const int MAX_LINES = 3000;
+
+    public DiffPatchView (string patch) {
+        Object (
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 0
+        );
+        add_css_class ("diff-patch");
+
+        var lines = patch.split ("\n");
+        var shown = 0;
+        foreach (var raw in lines) {
+            if (shown >= MAX_LINES) {
+                break;
+            }
+            shown++;
+            var label = new Gtk.Label (raw != "" ? raw : " ") {
+                xalign = 0,
+                selectable = true
+            };
+            label.add_css_class (Granite.CssClass.MONOSPACE);
+            label.add_css_class ("diff-line");
+            label.add_css_class (line_class (raw));
+            append (label);
+        }
+        if (lines.length > MAX_LINES) {
+            var more = new Gtk.Label (@"… $((int) lines.length - MAX_LINES) more lines") {
+                xalign = 0
+            };
+            more.add_css_class (Granite.CssClass.DIM);
+            more.add_css_class ("caption");
+            append (more);
+        }
+    }
+
+    private static string line_class (string line) {
+        if (line.has_prefix ("+++") || line.has_prefix ("---")) {
+            return "diff-file";
+        }
+        if (line.has_prefix ("@@")) {
+            return "diff-hunk";
+        }
+        if (line.has_prefix ("+")) {
+            return "diff-added";
+        }
+        if (line.has_prefix ("-")) {
+            return "diff-removed";
+        }
+        if (line.has_prefix ("diff --git") || line.has_prefix ("index ")
+            || line.has_prefix ("new file") || line.has_prefix ("deleted file")) {
+            return "diff-meta";
+        }
+        return "diff-context";
     }
 }
 

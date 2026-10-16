@@ -52,6 +52,11 @@ public class SessionPanel : Gtk.Box {
     private Gtk.Label sources_skills;
     private Gtk.Label sources_mcp;
 
+    /* Changed files */
+    private Gtk.Box? changes_box = null;
+    private Gtk.Label? changes_empty = null;
+    private Gtk.Label? changes_count = null;
+
     private int mcp_count = 0;
     /** When set, the panel ignores the active session and shows this
      *  message instead (e.g. while composing a brand-new session). */
@@ -87,6 +92,7 @@ public class SessionPanel : Gtk.Box {
 
         build_context ();
         build_project ();
+        build_changes ();
         build_usage ();
         build_turn_stats ();
         build_subagents ();
@@ -174,6 +180,111 @@ public class SessionPanel : Gtk.Box {
         project_path_label.add_css_class ("caption");
         project_path_label.add_css_class (Granite.CssClass.MONOSPACE);
         add_section (header, project_path_label);
+    }
+
+    /* -- changed files ------------------------------------------------ */
+
+    private void build_changes () {
+        Gtk.Label value;
+        var header = section_header ("Changed Files", out value);
+        changes_count = value;
+
+        changes_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) {
+            margin_start = 12,
+            margin_end = 12,
+            margin_bottom = 6
+        };
+        changes_empty = new Gtk.Label ("No changes yet") {
+            xalign = 0
+        };
+        changes_empty.add_css_class (Granite.CssClass.DIM);
+        changes_empty.add_css_class ("caption");
+        changes_box.append (changes_empty);
+        add_section (header, changes_box);
+    }
+
+    /** Rebuilds the changed-files list: one row per path (the store
+     *  already collapses duplicates), with a spinner on files being
+     *  written right now. */
+    public void set_diff_files (Gee.ArrayList<FileDiff> files, Gee.ArrayList<string> editing) {
+        if (changes_box == null || changes_empty == null || changes_count == null) {
+            return;
+        }
+        Gtk.Widget? child = changes_box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            changes_box.remove (child);
+            child = next;
+        }
+
+        var total_add = 0;
+        var total_del = 0;
+        foreach (var diff in files) {
+            total_add += diff.additions;
+            total_del += diff.deletions;
+        }
+        changes_count.label = files.size > 0
+            ? @"$(files.size) · +$total_add −$total_del"
+            : "";
+        changes_empty.visible = files.size == 0 && editing.size == 0;
+        changes_box.append (changes_empty);
+
+        var listed = new Gee.HashSet<string> ();
+        foreach (var diff in files) {
+            listed.add (diff.path);
+            changes_box.append (change_row (diff.path, diff.additions,
+                diff.deletions, diff.status, editing.contains (diff.path)));
+        }
+        /* Files being written that the diff has not caught up with. */
+        foreach (var path in editing) {
+            if (!listed.contains (path)) {
+                changes_box.append (change_row (path, -1, -1, "", true));
+            }
+        }
+    }
+
+    /** One changed file for the inspector: status icon, name, counts
+     *  and a spinner while it is being written. */
+    private static Gtk.Widget change_row (string path, int additions, int deletions,
+        string status, bool editing) {
+        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+        row.tooltip_text = path;
+
+        var icon_name = status == "added" ? "list-add"
+            : (status == "deleted" ? "edit-delete" : "text-x-generic");
+        row.append (new Gtk.Image.from_icon_name (icon_name) {
+            pixel_size = 12,
+            valign = Gtk.Align.CENTER
+        });
+        if (editing) {
+            row.append (new Gtk.Spinner () {
+                spinning = true,
+                valign = Gtk.Align.CENTER,
+                tooltip_text = "Being changed now"
+            });
+        }
+
+        var name = new Gtk.Label (GLib.Path.get_basename (path)) {
+            xalign = 0,
+            hexpand = true,
+            ellipsize = Pango.EllipsizeMode.MIDDLE
+        };
+        name.add_css_class ("caption");
+        row.append (name);
+
+        if (additions >= 0) {
+            var add_label = new Gtk.Label (@"+$additions");
+            add_label.add_css_class ("caption");
+            add_label.add_css_class ("diff-add");
+            row.append (add_label);
+        }
+        if (deletions >= 0) {
+            var del_label = new Gtk.Label (@"−$deletions");
+            del_label.add_css_class ("caption");
+            del_label.add_css_class ("diff-del");
+            row.append (del_label);
+        }
+        return row;
     }
 
     /* -- usage --------------------------------------------------------- */

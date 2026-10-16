@@ -653,7 +653,10 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         store.active_session_changed.connect (() => {
             chat_view.clear ();
-            composer.set_diff_stat (0, 0, 0);
+            composer.set_diff_files (new Gee.ArrayList<FileDiff> (), new Gee.ArrayList<string> ());
+            /* Same for the inspector: the previous session's files must
+             *  not linger while the new list is being fetched. */
+            session_panel.set_diff_files (new Gee.ArrayList<FileDiff> (), new Gee.ArrayList<string> ());
             /* A real session is now open: leave new-session mode and
              * let the sidebar highlight it again. */
             composing_new_session = false;
@@ -777,7 +780,9 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         store.diffs_changed.connect ((session_id) => {
             if (session_id == store.active_session_id) {
-                composer.set_diff_stat (store.diff_files, store.diff_additions, store.diff_deletions);
+                var editing = store.editing_paths_for (session_id);
+                composer.set_diff_files (store.diff_list, editing);
+                session_panel.set_diff_files (store.diff_list, editing);
             }
         });
 

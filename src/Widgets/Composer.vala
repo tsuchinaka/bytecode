@@ -54,7 +54,10 @@ public class Composer : Gtk.Box {
     private Gtk.Button stop_button;
     private Gtk.Button attach_button;
     private Gtk.Label status_label;
-    private Gtk.Button diff_button;
+    private Gtk.MenuButton diff_button;
+    private Gtk.Box diff_list_box;
+    private Gtk.Label diff_chip_label;
+    private Gtk.Spinner diff_chip_spinner;
     private Gtk.Button permission_mode_button;
     private string permission_mode = "ask";
     private BrailleSpinner busy_spinner;
@@ -312,14 +315,43 @@ public class Composer : Gtk.Box {
         };
         status_label.add_css_class ("message-meta");
 
-        diff_button = new Gtk.Button () {
+        /* Changed-files chip: a compact summary that opens the list of
+         *  files the agent has touched (one row per path), with a
+         *  spinner on anything being written right now. */
+        diff_button = new Gtk.MenuButton () {
             valign = Gtk.Align.CENTER,
             visible = false,
-            tooltip_text = "View changes"
+            tooltip_text = "Files changed in this session"
         };
         diff_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         diff_button.add_css_class ("diff-chip");
-        diff_button.clicked.connect (() => diff_requested ());
+
+        var diff_chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            valign = Gtk.Align.CENTER
+        };
+        diff_chip_spinner = new Gtk.Spinner () {
+            visible = false,
+            tooltip_text = "Editing a file"
+        };
+        diff_chip_label = new Gtk.Label ("") {
+            valign = Gtk.Align.CENTER
+        };
+        diff_chip_label.add_css_class ("diff-chip-label");
+        diff_chip_box.append (diff_chip_spinner);
+        diff_chip_box.append (diff_chip_label);
+        diff_button.child = diff_chip_box;
+
+        diff_list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        var diff_scrolled = new Gtk.ScrolledWindow () {
+            hscrollbar_policy = Gtk.PolicyType.NEVER,
+            propagate_natural_width = true,
+            max_content_height = 320,
+            child = diff_list_box
+        };
+        var diff_popover = new Gtk.Popover () {
+            child = diff_scrolled
+        };
+        OpenClient.set_menu_popover (diff_button, diff_popover);
 
         attach_button = new Gtk.Button.from_icon_name ("mail-attachment-symbolic") {
             tooltip_text = "Attach images",
@@ -509,13 +541,115 @@ public class Composer : Gtk.Box {
         }
     }
 
-    public void set_diff_stat (int files, int additions, int deletions) {
-        if (files <= 0) {
+    /** Rebuilds the changed-files chip and its popover: one row per
+     *  path, plus a spinner on files being written right now (including
+     *  ones the diff has not caught up with yet). */
+    public void set_diff_files (Gee.ArrayList<FileDiff> files, Gee.ArrayList<string> editing) {
+        if (files.size == 0 && editing.size == 0) {
             diff_button.visible = false;
+            clear_box (diff_list_box);
             return;
         }
+
+        var additions = 0;
+        var deletions = 0;
+        foreach (var diff in files) {
+            additions += diff.additions;
+            deletions += diff.deletions;
+        }
         diff_button.visible = true;
-        diff_button.label = @"+$additions −$deletions · $files";
+        diff_chip_label.label = @"+$additions −$deletions · $(files.size)";
+        diff_button.tooltip_text = files.size == 1
+            ? @"$(files.size) file changed in this session"
+            : @"$(files.size) files changed in this session";
+        var busy = editing.size > 0;
+        diff_chip_spinner.visible = busy;
+        diff_chip_spinner.spinning = busy;
+
+        clear_box (diff_list_box);
+        var listed = new Gee.HashSet<string> ();
+        foreach (var diff in files) {
+            listed.add (diff.path);
+            diff_list_box.append (diff_file_row (diff.path, diff.additions,
+                diff.deletions, diff.status, editing.contains (diff.path)));
+        }
+        /* Files being written that the diff does not know about yet
+         *  (a brand-new file, or a fetch still in flight). */
+        foreach (var path in editing) {
+            if (listed.contains (path)) {
+                continue;
+            }
+            diff_list_box.append (diff_file_row (path, -1, -1, "", true));
+        }
+        diff_list_box.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
+        var open_button = new Gtk.Button.with_label ("View Full Changes") {
+            halign = Gtk.Align.FILL
+        };
+        open_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+        open_button.clicked.connect (() => {
+            diff_button.popdown ();
+            diff_requested ();
+        });
+        diff_list_box.append (open_button);
+    }
+
+    /** One changed file: status icon, name, +/− counts and a spinner
+     *  while it is being written. Negative counts mean "unknown yet". */
+    private static Gtk.Widget diff_file_row (string path, int additions, int deletions,
+        string status, bool editing) {
+        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
+            margin_top = 4,
+            margin_bottom = 4,
+            margin_start = 8,
+            margin_end = 8
+        };
+        row.tooltip_text = path;
+
+        var icon_name = status == "added" ? "list-add"
+            : (status == "deleted" ? "edit-delete" : "text-x-generic");
+        row.append (new Gtk.Image.from_icon_name (icon_name) {
+            pixel_size = 14,
+            valign = Gtk.Align.CENTER
+        });
+
+        if (editing) {
+            var spinner = new Gtk.Spinner () {
+                spinning = true,
+                valign = Gtk.Align.CENTER,
+                tooltip_text = "Being changed now"
+            };
+            row.append (spinner);
+        }
+
+        var name = GLib.Path.get_basename (path);
+        var name_label = new Gtk.Label (name) {
+            xalign = 0,
+            hexpand = true,
+            ellipsize = Pango.EllipsizeMode.MIDDLE,
+            max_width_chars = 28
+        };
+        row.append (name_label);
+
+        if (additions >= 0) {
+            var add_label = new Gtk.Label (@"+$additions");
+            add_label.add_css_class ("diff-add");
+            row.append (add_label);
+        }
+        if (deletions >= 0) {
+            var del_label = new Gtk.Label (@"−$deletions");
+            del_label.add_css_class ("diff-del");
+            row.append (del_label);
+        }
+        return row;
+    }
+
+    private static void clear_box (Gtk.Box box) {
+        Gtk.Widget? child = box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            box.remove (child);
+            child = next;
+        }
     }
 
     public void set_context (double fraction, string label) {

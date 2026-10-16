@@ -27,6 +27,9 @@ public class LiveTool : GLib.Object {
     public string session_id { get; set; default = ""; }
     public string name { get; set; default = ""; }
     public string input_summary { get; set; default = ""; }
+    /** Path this tool is writing or editing, when it touches a file.
+     *  Lets the UI mark a file as being changed right now. */
+    public string file_path { get; set; default = ""; }
     public string output_text { get; set; default = ""; }
     public Gee.ArrayList<FileAttachment> files;
     public bool error { get; set; default = false; }
@@ -128,6 +131,12 @@ public class Store : GLib.Object {
     public int diff_additions { get; private set; default = 0; }
     public int diff_deletions { get; private set; default = 0; }
     public string diff_session_id { get; private set; default = ""; }
+    /** The active session's changed files, one entry per path, in the
+     *  order the server reported them. */
+    public Gee.ArrayList<FileDiff> diff_list;
+    /** Coalesced diff refresh (see schedule_diff_refresh). */
+    private uint diff_refresh_source = 0;
+    private string diff_refresh_pending = "";
     public int64 context_used_tokens { get; private set; default = -1; }
     public string context_used_session { get; private set; default = ""; }
     private bool refreshing_context = false;
@@ -180,6 +189,7 @@ public class Store : GLib.Object {
         models_by_id = new Gee.HashMap<string, ModelInfo> ();
         live_tools_by_session = new Gee.HashMap<string, Gee.ArrayList<string>> ();
         active_message_ids = new Gee.HashSet<string> ();
+        diff_list = new Gee.ArrayList<FileDiff> ();
     }
 
     /** Session lookup by id: O(1) instead of a linear scan. Returns
@@ -693,23 +703,91 @@ public class Store : GLib.Object {
             return;
         }
         try {
-            var diffs = yield client.get_diff (session_id);
-            var files = 0;
+            var fetched = yield client.get_diff (session_id);
+            /* One entry per path: the server aggregates a file's hunks
+             *  already, and this keeps the list free of duplicates when
+             *  it does not (renames, repeated writes). */
+            var by_path = new Gee.HashMap<string, FileDiff> ();
+            var order = new Gee.ArrayList<string> ();
+            foreach (var diff in fetched) {
+                if (!by_path.has_key (diff.path)) {
+                    order.add (diff.path);
+                }
+                by_path[diff.path] = diff;
+            }
+            diff_list.clear ();
             var additions = 0;
             var deletions = 0;
-            foreach (var diff in diffs) {
-                files += 1;
+            foreach (var path in order) {
+                var diff = by_path[path];
+                diff_list.add (diff);
                 additions += diff.additions;
                 deletions += diff.deletions;
             }
             diff_session_id = session_id;
-            diff_files = files;
+            diff_files = diff_list.size;
             diff_additions = additions;
             diff_deletions = deletions;
             diffs_changed (session_id);
         } catch (Error e) {
             debug ("Diff stat failed: %s", e.message);
         }
+    }
+
+    /** Coalesces diff refreshes: a turn settles several file-writing
+     *  tools, and each one used to mean its own round trip. */
+    public void schedule_diff_refresh (string session_id) {
+        if (client == null || session_id == "" || session_id != active_session_id) {
+            return;
+        }
+        diff_refresh_pending = session_id;
+        if (diff_refresh_source != 0) {
+            return;
+        }
+        diff_refresh_source = GLib.Timeout.add (300, () => {
+            diff_refresh_source = 0;
+            var pending = diff_refresh_pending;
+            diff_refresh_pending = "";
+            if (pending != "") {
+                refresh_diff_stat.begin (pending);
+            }
+            return false;
+        });
+    }
+
+    /** Paths a file-mutating tool is working on right now, so the UI
+     *  can show a file as being changed before the diff catches up. */
+    public Gee.ArrayList<string> editing_paths_for (string session_id) {
+        var paths = new Gee.ArrayList<string> ();
+        foreach (var tool in live_tools.values) {
+            if (tool.done || tool.session_id != session_id || tool.file_path == "") {
+                continue;
+            }
+            if (!paths.contains (tool.file_path)) {
+                paths.add (tool.file_path);
+            }
+        }
+        return paths;
+    }
+
+    /** True for the tools that write a file. */
+    public static bool is_file_mutation (string tool) {
+        return tool == "write" || tool == "edit" || tool == "patch" || tool == "multiedit";
+    }
+
+    /** Path a file-mutating tool targets, or "" when it does not touch
+     *  one. */
+    public static string tool_file_path (string tool, Json.Object? input) {
+        if (input == null || !is_file_mutation (tool)) {
+            return "";
+        }
+        foreach (var key in new string[] { "filePath", "path", "file", "uri" }) {
+            var value = JsonUtil.string_member (input, key);
+            if (value != null && value.strip () != "") {
+                return value.strip ();
+            }
+        }
+        return "";
     }
 
     public async void refresh_context_usage (string session_id, bool force = false) {
@@ -2177,6 +2255,8 @@ public class Store : GLib.Object {
                     session_id = session_id,
                     name = JsonUtil.string_member (data, "name") ?? "tool"
                 };
+                tool.file_path = tool_file_path (tool.name,
+                    JsonUtil.object_member (data, "input"));
                 live_tools[call_id] = tool;
                 index_live_tool (tool);
                 set_status (session_id, "running");
@@ -2185,6 +2265,11 @@ public class Store : GLib.Object {
                 if (session_id == active_session_id) {
                     ensure_assistant_message (message_id);
                     tool_changed (message_id, call_id, "started");
+                    if (tool.file_path != "") {
+                        /* A file is being written right now: show it in
+                         * the changed-files lists straight away. */
+                        diffs_changed (session_id);
+                    }
                 }
                 break;
             }
@@ -2238,6 +2323,12 @@ public class Store : GLib.Object {
                 }
                 tool.done = true;
                 tool.error = type == "session.tool.failed";
+                /* A finished write/edit changes the file list: refresh
+                 * it (coalesced, so a burst of edits is one fetch). */
+                if (tool.file_path != "" || is_file_mutation (tool.name)) {
+                    tool.file_path = "";
+                    schedule_diff_refresh (session_id);
+                }
                 var outputs = new StringBuilder ();
                 foreach (var content_obj in JsonUtil.array_objects (data, "content")) {
                     var content_type = JsonUtil.string_member (content_obj, "type") ?? "";
