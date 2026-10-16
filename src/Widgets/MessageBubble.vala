@@ -55,8 +55,6 @@ public class MessageBubble : Gtk.Box {
      *  end knows the full text still has to be rendered. */
     private bool tail_shown = false;
     /** Widest an attachment preview is drawn (and decoded) at. */
-    private const int PREVIEW_PX = 320;
-
     /** History text beyond this is collapsed behind "Show more". */
     private const int HISTORY_TEXT_LIMIT = 2000;
     /** Coalescing: snappy while the answer is small… */
@@ -71,17 +69,16 @@ public class MessageBubble : Gtk.Box {
     private Gtk.Button? show_more_button = null;
 
     public MessageBubble (Message message) {
-        /* T3-style layout: user turns are distinct right-aligned
-         * blocks, assistant answers are flat full-width text, not
-         * everything needs bubble chrome. Tool cards keep their own
-         * card styling inside the flat answer. */
-        bool is_user = message.role == MessageRole.USER;
+        /* Assistant answers are flat full-width text (T3-style), not
+         * bubbles: no background, no border; tool cards and
+         * attachments keep their own styling inside the flat answer.
+         * User turns live in UserBubble. */
         Object (
             message_id: message.id,
             orientation: Gtk.Orientation.VERTICAL,
             spacing: 6,
-            halign: is_user ? Gtk.Align.END : Gtk.Align.FILL,
-            hexpand: !is_user
+            halign: Gtk.Align.FILL,
+            hexpand: true
         );
         tool_cards = new Gee.HashMap<string, ToolCard> ();
         live_tools = new Gee.HashMap<string, string> ();
@@ -95,17 +92,12 @@ public class MessageBubble : Gtk.Box {
         }
 
         content = new Gtk.Box (Gtk.Orientation.VERTICAL, 6) {
-            hexpand = !is_user
+            hexpand = true
         };
-        if (is_user) {
-            content.add_css_class ("bubble");
-            content.add_css_class ("user-bubble");
-        } else {
-            content.add_css_class ("assistant-bubble");
-        }
+        content.add_css_class ("assistant-bubble");
 
-        meta_label = new Gtk.Label (message.role == MessageRole.USER ? "You" : "Assistant") {
-            xalign = message.role == MessageRole.USER ? 1 : 0,
+        meta_label = new Gtk.Label ("Assistant") {
+            xalign = 0,
             visible = false
         };
         meta_label.add_css_class ("message-meta");
@@ -116,18 +108,13 @@ public class MessageBubble : Gtk.Box {
         var stamp = message.created > 0
             ? new DateTime.from_unix_local (message.created / 1000).format ("%H:%M")
             : "";
-        if (message.role == MessageRole.USER) {
-            meta_label.label = stamp != "" ? @"You · $stamp" : "You";
-            meta_label.visible = true;
-        } else {
-            var model = message.model;
-            if (model != "") {
-                meta_label.label = @"Assistant · $model";
-            } else if (stamp != "") {
-                meta_label.label = @"Assistant · $stamp";
-            }
-            meta_label.visible = true;
+        var model = message.model;
+        if (model != "") {
+            meta_label.label = @"Assistant · $model";
+        } else if (stamp != "") {
+            meta_label.label = @"Assistant · $stamp";
         }
+        meta_label.visible = true;
 
         live = new LiveStatus ();
         reasoning = new ReasoningBubble ();
@@ -519,15 +506,9 @@ public class MessageBubble : Gtk.Box {
         }
 
         /* Drop whitespace-only prose: it renders no widget. */
-        var blocks = new Gee.ArrayList<Markdown.Block> ();
-        foreach (var block in Markdown.to_blocks (source)) {
-            if (block.kind == Markdown.BlockKind.PROSE && block.text.strip () == "") {
-                continue;
-            }
-            blocks.add (block);
-        }
+        var blocks = BlockView.parse (source);
 
-        if (same_blocks (rendered_blocks, blocks)) {
+        if (BlockView.same_shape (rendered_blocks, blocks, block_widgets.size)) {
             /* Same shape: update labels in place so text selection
              * and focus survive streaming re-renders. Blocks whose
              * text did not change are left untouched, so a streaming
@@ -539,7 +520,7 @@ public class MessageBubble : Gtk.Box {
                     && old_block.text == new_block.text) {
                     continue;
                 }
-                update_block_widget (block_widgets[i], new_block);
+                BlockView.update_widget (block_widgets[i], new_block);
             }
             rendered_blocks = blocks;
             return;
@@ -555,29 +536,7 @@ public class MessageBubble : Gtk.Box {
         block_widgets.clear ();
 
         foreach (var block in blocks) {
-            Gtk.Widget widget;
-            switch (block.kind) {
-                case Markdown.BlockKind.TABLE:
-                    if (block.table != null) {
-                        widget = build_table (block.table);
-                    } else {
-                        widget = make_markup_label ("");
-                    }
-                    break;
-                case Markdown.BlockKind.QUOTE:
-                    widget = make_markup_label (Markdown.to_pango (block.text.strip ()));
-                    widget.add_css_class ("md-quote");
-                    break;
-                case Markdown.BlockKind.CODE:
-                    widget = build_code (block);
-                    break;
-                case Markdown.BlockKind.SEPARATOR:
-                    widget = new Gtk.Separator (Gtk.Orientation.HORIZONTAL);
-                    break;
-                default:
-                    widget = make_markup_label (Markdown.to_pango (block.text.strip ()));
-                    break;
-            }
+            var widget = BlockView.build (block);
             text_box.append (widget);
             rendered_blocks.add (block);
             block_widgets.add (widget);
@@ -602,216 +561,12 @@ public class MessageBubble : Gtk.Box {
         return full;
     }
 
-    /** Same widget shape: same count, same kinds, same table dims. */
-    private bool same_blocks (Gee.ArrayList<Markdown.Block> old_blocks,
-        Gee.ArrayList<Markdown.Block> new_blocks) {
-        if (old_blocks.size != new_blocks.size || block_widgets.size != old_blocks.size) {
-            return false;
-        }
-        for (int i = 0; i < new_blocks.size; i++) {
-            var a = old_blocks[i];
-            var b = new_blocks[i];
-            if (a.kind != b.kind) {
-                return false;
-            }
-            if (b.kind == Markdown.BlockKind.TABLE) {
-                if (a.table == null || b.table == null) {
-                    return false;
-                }
-                if (a.table.columns != b.table.columns
-                    || a.table.rows.size != b.table.rows.size) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    private Gtk.Label make_markup_label (string markup) {
-        var label = new Gtk.Label ("") {
-            xalign = 0,
-            wrap = true,
-            wrap_mode = Pango.WrapMode.WORD_CHAR,
-            selectable = true,
-            max_width_chars = 90
-        };
-        label.set_markup (markup);
-        Markdown.wire_links (label);
-        return label;
-    }
-
-    private void update_block_widget (Gtk.Widget widget, Markdown.Block block) {
-        if (block.kind == Markdown.BlockKind.TABLE && block.table != null && widget is Gtk.Grid) {
-            var grid = (Gtk.Grid) widget;
-            var table = block.table;
-            for (int c = 0; c < table.columns; c++) {
-                var head = grid.get_child_at (c, 0);
-                if (head is Gtk.Label) {
-                    ((Gtk.Label) head).set_markup (Markdown.inline_format (table.header_cell (c)));
-                }
-                for (int r = 0; r < table.rows.size; r++) {
-                    var cell = grid.get_child_at (c, r + 1);
-                    if (cell is Gtk.Label) {
-                        ((Gtk.Label) cell).set_markup (Markdown.inline_format (table.cell (r, c)));
-                    }
-                }
-            }
-            return;
-        }
-        if (block.kind == Markdown.BlockKind.CODE && widget is Gtk.Box) {
-            var box = (Gtk.Box) widget;
-            for (var c = box.get_first_child (); c != null; c = c.get_next_sibling ()) {
-                if (c.has_css_class ("md-code-lang") && c is Gtk.Label) {
-                    ((Gtk.Label) c).label = block.lang.strip ();
-                } else if (c.has_css_class ("md-code-body") && c is Gtk.Label) {
-                    ((Gtk.Label) c).set_markup ("<tt>" + GLib.Markup.escape_text (block.text) + "</tt>");
-                }
-            }
-            return;
-        }
-        if (block.kind == Markdown.BlockKind.QUOTE && widget is Gtk.Label) {
-            ((Gtk.Label) widget).set_markup (Markdown.to_pango (block.text.strip ()));
-        } else if (block.kind == Markdown.BlockKind.PROSE && widget is Gtk.Label) {
-            ((Gtk.Label) widget).set_markup (Markdown.to_pango (block.text.strip ()));
-        }
-    }
-
-    private Gtk.Label make_table_cell (string raw, int align, bool header) {
-        var label = new Gtk.Label ("") {
-            xalign = align == 1 ? 0.5f : (align == 2 ? 1.0f : 0.0f),
-            halign = Gtk.Align.FILL,
-            wrap = true,
-            wrap_mode = Pango.WrapMode.WORD_CHAR,
-            selectable = true,
-            max_width_chars = 40
-        };
-        label.set_markup (Markdown.inline_format (raw));
-        Markdown.wire_links (label);
-        label.add_css_class ("md-table-cell");
-        if (header) {
-            label.add_css_class ("md-table-header");
-        }
-        return label;
-    }
-
-    private Gtk.Box build_code (Markdown.Block block) {
-        var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
-        var lang = block.lang.strip ();
-        if (lang != "") {
-            var lang_label = new Gtk.Label (lang) {
-                xalign = 0
-            };
-            lang_label.add_css_class ("md-code-lang");
-            box.append (lang_label);
-        }
-        var body = new Gtk.Label ("") {
-            xalign = 0,
-            wrap = true,
-            wrap_mode = Pango.WrapMode.WORD_CHAR,
-            selectable = true
-        };
-        body.add_css_class ("tool-output");
-        body.add_css_class (Granite.CssClass.MONOSPACE);
-        body.add_css_class ("md-code-body");
-        body.set_markup ("<tt>" + GLib.Markup.escape_text (block.text) + "</tt>");
-        box.append (body);
-        return box;
-    }
-
-    private Gtk.Grid build_table (Markdown.TableData table) {
-        var grid = new Gtk.Grid () {
-            column_spacing = 0,
-            row_spacing = 0,
-            halign = Gtk.Align.START
-        };
-        grid.add_css_class ("md-table");
-
-        var cols = table.columns;
-        for (int c = 0; c < cols; c++) {
-            grid.attach (make_table_cell (table.header_cell (c), table.align_for (c), true), c, 0, 1, 1);
-        }
-        for (int r = 0; r < table.rows.size; r++) {
-            for (int c = 0; c < cols; c++) {
-                grid.attach (make_table_cell (table.cell (r, c), table.align_for (c), false), c, r + 1, 1, 1);
-            }
-        }
-        return grid;
-    }
 
     public void add_file (FileAttachment file) {
         files_seen = true;
         content.visible = true;
-
-        /* One block per attachment: the chip, and under it the name of
-         *  the file. A decodable image swaps the chip for the picture
-         *  and keeps the name, so an attachment is never an unlabelled
-         *  box, and never an empty space when a decode fails. */
-        var block = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) {
-            halign = Gtk.Align.START
-        };
-        block.append (file_chip (file));
-
-        Gtk.Label? caption = null;
-        if (file.is_image) {
-            caption = new Gtk.Label (file.display_name) {
-                xalign = 0,
-                visible = false
-            };
-            caption.add_css_class (Granite.CssClass.DIM);
-            caption.add_css_class ("caption");
-            caption.add_css_class ("attachment-caption");
-            block.append (caption);
-        }
-
-        files_box.append (block);
+        files_box.append (new AttachmentView (file));
         files_box.visible = true;
-
-        if (!file.is_image) {
-            return;
-        }
-        debug ("attachment %s: decoding", file.display_name);
-        file.load_pixbuf_async.begin (PREVIEW_PX, (obj, res) => {
-            var pixbuf = file.load_pixbuf_async.end (res);
-            if (pixbuf == null) {
-                debug ("attachment %s: kept as a chip (no pixbuf)", file.display_name);
-                return;
-            }
-            var picture = new Gtk.Picture.for_paintable (pixbuf_texture (pixbuf)) {
-                halign = Gtk.Align.START,
-                width_request = int.min (PREVIEW_PX, pixbuf.width),
-                tooltip_text = file.display_name
-            };
-            picture.add_css_class ("attachment-image");
-            /* Swap the chip out of the same block, so several
-             *  attachments hold the order they were sent in. */
-            var chip = block.get_first_child ();
-            if (chip != null) {
-                block.remove (chip);
-            }
-            block.prepend (picture);
-            if (caption != null) {
-                caption.visible = true;
-            }
-            files_box.visible = true;
-            debug ("attachment %s: swapped in %dx%d", file.display_name, pixbuf.width, pixbuf.height);
-        });
-    }
-
-    private Gtk.Widget file_chip (FileAttachment file) {
-        var chip = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-        chip.add_css_class ("attachment-chip");
-        var icon = new Gtk.Image.from_icon_name (file.is_image ? "image-x-generic" : "text-x-generic") {
-            pixel_size = 16
-        };
-        var label = new Gtk.Label (file.display_name) {
-            xalign = 0,
-            ellipsize = Pango.EllipsizeMode.MIDDLE,
-            max_width_chars = 28
-        };
-        chip.append (icon);
-        chip.append (label);
-        chip.tooltip_text = file.uri;
-        return chip;
     }
 
     /** Persistent failure line for turns the server stored with
