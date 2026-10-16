@@ -287,10 +287,11 @@ popover > contents {
   border: none;
 }
 
-/* The permission mode and the three pickers share one shape, so the
- * row under the input reads as a single control strip instead of four
- * buttons that each look slightly different. Slightly rounded
- * rectangles, the elementary shape, not pills. */
+/* The three pickers share one shape, so the row under the input
+ * reads as a single control strip instead of three buttons that each
+ * look slightly different. Slightly rounded rectangles, the
+ * elementary shape, not pills. (The permission shield beside them is
+ * a plain icon button, like attach and stop.) */
 .composer-card button.composer-chip,
 .composer-card menubutton > button {
   padding: 2px 10px;
@@ -332,13 +333,6 @@ popover > contents {
   background-color: alpha(@theme_fg_color, 0.13);
 }
 
-/* Cost / token readout: quiet, and the first thing to give up width
- * when the toolbar runs out of room. */
-.composer-status {
-  font-family: monospace;
-  font-size: 0.85em;
-}
-
 /* Attachments */
 .attachment-chip {
   background-color: alpha(@borders, 0.28);
@@ -367,13 +361,7 @@ levelbar trough {
   border-radius: 9999px;
 }
 
-/* The composer's meter is a line under the input, not a bar across the
- * card, so it stays slim there. */
-.composer-context levelbar trough {
-  min-height: 4px;
-}
-
-/* Context meter ramp. NOTE: driven from code (Composer adds
+/* Context meter ramp. NOTE: driven from code (the inspector adds
  * .context-high/.context-full to the bar), NOT via offset classes:
  * GTK tags filled blocks with every defined offset, so pure offset
  * selectors cannot discriminate and paint everything red. */

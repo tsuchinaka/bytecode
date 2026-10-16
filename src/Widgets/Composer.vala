@@ -52,7 +52,6 @@ public class Composer : Gtk.Box {
     private Gtk.Button send_button;
     private Gtk.Button stop_button;
     private Gtk.Button attach_button;
-    private Gtk.Label status_label;
     private Gtk.MenuButton diff_button;
     private Gtk.Box? diff_row = null;
     private Gtk.Label? diff_editing_label = null;
@@ -69,9 +68,6 @@ public class Composer : Gtk.Box {
     /** True while the inline command list is showing. */
     private bool commands_shown = false;
     private Gee.ArrayList<CommandInfo> commands;
-    private Gtk.LevelBar context_bar;
-    private Gtk.Label context_label;
-    private Gtk.Box context_row;
 
     private Gtk.Revealer permission_revealer;
     private Gtk.Label permission_label;
@@ -92,11 +88,6 @@ public class Composer : Gtk.Box {
      *  empty string, which made the first "/" (an empty query) look
      *  already built and show no list. */
     private string? last_command_query = null;
-    /** Last meter value/band/label written, so repeated usage events
-     *  with the same numbers don't invalidate layout. */
-    private double last_context_value = -1.0;
-    private string last_context_band = "";
-    private string last_context_label = "\x00sentinel";
 
     public Composer () {
         Object (
@@ -240,7 +231,7 @@ public class Composer : Gtk.Box {
             child = text_view
         };
 
-        placeholder_label = new Gtk.Label ("Send a message") {
+        placeholder_label = new Gtk.Label ("Plan, build, or ask. Type / for commands") {
             xalign = 0,
             yalign = 0,
             halign = Gtk.Align.START,
@@ -308,45 +299,13 @@ public class Composer : Gtk.Box {
         drop_target.drop.connect ((value, x, y) => on_files_dropped (value));
         text_view.add_controller (drop_target);
 
-        /* Context meter: a slim line under the input, with its reading
-         *  as a quiet caption rather than a heavy bar across the card. */
-        context_bar = new Gtk.LevelBar.for_interval (0.0, 1.0) {
-            hexpand = true,
-            valign = Gtk.Align.CENTER
-        };
-        context_label = new Gtk.Label ("") {
-            xalign = 1,
-            valign = Gtk.Align.CENTER
-        };
-        context_label.add_css_class (Granite.CssClass.DIM);
-        context_label.add_css_class ("caption");
-        context_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
-            margin_start = 12,
-            margin_end = 12,
-            margin_top = 4,
-            margin_bottom = 2,
-            visible = false
-        };
-        context_row.add_css_class ("composer-context");
-        context_row.append (context_bar);
-        context_row.append (context_label);
-
-        /* Bottom row: choosers, status, actions */
+        /* Bottom row: attach and permission mode on the left, model
+         *  pickers and send pinned right, like the primary client. */
         agent_chooser = new AgentChooser ();
         model_chooser = new ModelChooser ();
         variant_chooser = new VariantChooser ();
 
         busy_spinner = new BrailleSpinner ();
-
-        status_label = new Gtk.Label ("") {
-            xalign = 0,
-            ellipsize = Pango.EllipsizeMode.END,
-            max_width_chars = 42,
-            hexpand = true
-        };
-        status_label.add_css_class (Granite.CssClass.DIM);
-        status_label.add_css_class ("caption");
-        status_label.add_css_class ("composer-status");
 
         /* Changed-files chip: sits directly above the input and opens
          *  the list of files the agent has touched (one row per path),
@@ -428,14 +387,14 @@ public class Composer : Gtk.Box {
         send_button.add_css_class ("suggested-action");
         send_button.clicked.connect (() => request_send ());
 
-        permission_mode_button = new Gtk.Button () {
-            tooltip_text = "Permission mode (click to cycle)",
+        /* Shield showing the permission mode (ask, read-only, YOLO):
+         *  an icon like the primary client, not a text button. The mode
+         *  name stays in the tooltip, since the icon alone cannot say
+         *  which mode is on. */
+        permission_mode_button = new Gtk.Button.from_icon_name ("security-medium-symbolic") {
             valign = Gtk.Align.CENTER
         };
-        /* No flat class: the theme's flat styling wipes the chip fill
-         *  this row shares, leaving the mode button bare next to the
-         *  pickers. The composer-chip rule already removes the shadow. */
-        permission_mode_button.add_css_class ("composer-chip");
+        permission_mode_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         permission_mode_button.clicked.connect (() => cycle_permission_mode ());
         update_permission_mode_button ();
 
@@ -444,13 +403,16 @@ public class Composer : Gtk.Box {
             margin_end = 8,
             margin_bottom = 8
         };
+        buttons.append (attach_button);
         buttons.append (permission_mode_button);
+        buttons.append (busy_spinner);
+        var spacer = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) {
+            hexpand = true
+        };
+        buttons.append (spacer);
         buttons.append (agent_chooser);
         buttons.append (model_chooser);
         buttons.append (variant_chooser);
-        buttons.append (busy_spinner);
-        buttons.append (status_label);
-        buttons.append (attach_button);
         buttons.append (stop_button);
         buttons.append (send_button);
 
@@ -485,7 +447,6 @@ public class Composer : Gtk.Box {
 
         frame.append (command_revealer);
         frame.append (overlay);
-        frame.append (context_row);
         frame.append (buttons);
         append (frame);
     }
@@ -606,19 +567,12 @@ public class Composer : Gtk.Box {
         clear_attachments ();
     }
 
-    public void set_running (bool running, string? detail = null) {
+    public void set_running (bool running) {
         stop_button.visible = running;
         if (running) {
             busy_spinner.start ();
-            status_label.label = detail ?? "Generating…";
         } else {
             busy_spinner.stop ();
-        }
-    }
-
-    public void set_status_text (string text) {
-        if (!stop_button.visible) {
-            status_label.label = text;
         }
     }
 
@@ -697,37 +651,6 @@ public class Composer : Gtk.Box {
         return label;
     }
 
-    public void set_context (double fraction, string label) {
-        if (fraction < 0.0) {
-            context_row.visible = false;
-            return;
-        }
-        context_row.visible = true;
-        var clamped = double.min (1.0, double.max (0.0, fraction));
-        /* Guarded: usage events arrive several times per second, and
-         *  writing an identical value (re)invalidates layout/style. */
-        if (clamped != last_context_value) {
-            context_bar.value = clamped;
-            last_context_value = clamped;
-        }
-        /* Color ramp lives here, not in offset selectors (see style.css). */
-        string band = clamped >= 0.92 ? "context-full"
-            : (clamped >= 0.75 ? "context-high" : "");
-        if (band != last_context_band) {
-            context_bar.remove_css_class ("context-high");
-            context_bar.remove_css_class ("context-full");
-            if (band != "") {
-                context_bar.add_css_class (band);
-            }
-            last_context_band = band;
-        }
-        if (label != last_context_label) {
-            context_label.label = label;
-            context_label.tooltip_text = @"Context used: $(label)";
-            last_context_label = label;
-        }
-    }
-
     /* -- permissions -------------------------------------------------- */
 
     public void show_permission (string request_id, string description) {
@@ -769,12 +692,15 @@ public class Composer : Gtk.Box {
 
     private void update_permission_mode_button () {
         string label = "Always ask";
+        string icon = "security-medium-symbolic";
         if (permission_mode == "readonly") {
             label = "Read-only";
+            icon = "security-high-symbolic";
         } else if (permission_mode == "yolo") {
             label = "Allow YOLO";
+            icon = "security-low-symbolic";
         }
-        permission_mode_button.label = label;
+        permission_mode_button.icon_name = icon;
         permission_mode_button.tooltip_text = @"Permission mode: $label (click to cycle)";
     }
 

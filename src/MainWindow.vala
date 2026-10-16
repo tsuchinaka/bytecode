@@ -641,7 +641,6 @@ public class MainWindow : Gtk.ApplicationWindow {
                 update_row_indicator (session.id);
             }
             update_title ();
-            update_context_meter ();
             refresh_panel ();
         });
 
@@ -686,7 +685,6 @@ public class MainWindow : Gtk.ApplicationWindow {
             composer.set_permission_mode (store.active_session != null ? store.active_session.permission_mode : "ask");
             update_permission_banner ();
             update_form_dock ();
-            update_context_meter ();
             refresh_panel ();
         });
 
@@ -853,7 +851,6 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         store.usage_updated.connect (() => {
             update_title ();
-            update_context_meter ();
             refresh_panel ();
         });
 
@@ -863,13 +860,11 @@ public class MainWindow : Gtk.ApplicationWindow {
             new_session_view.set_models (store.models);
             new_session_view.set_agents (store.agents);
             update_choosers ();
-            update_context_meter ();
             refresh_panel ();
         });
 
         store.model_changed.connect ((session_id) => {
             update_choosers ();
-            update_context_meter ();
             refresh_panel ();
         });
 
@@ -909,7 +904,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             update_form_dock ();
             var form = store.pending_form_for (session_id);
             if (session_id == store.active_session_id) {
-                composer.set_running (store.is_active_running, form != null ? "Answer the question above" : null);
+                composer.set_running (store.is_active_running);
             }
             if (form != null) {
                 if (app.config.notifications_enabled && app.config.notify_questions
@@ -1072,7 +1067,6 @@ public class MainWindow : Gtk.ApplicationWindow {
             title_label.label = "";
             subtitle_label.label = "";
             subtitle_label.visible = false;
-            composer.set_status_text ("");
             return;
         }
         var session = app.store.active_session;
@@ -1080,7 +1074,6 @@ public class MainWindow : Gtk.ApplicationWindow {
             title_label.label = "bytecode";
             subtitle_label.label = "";
             subtitle_label.visible = false;
-            composer.set_status_text ("");
             return;
         }
 
@@ -1096,39 +1089,6 @@ public class MainWindow : Gtk.ApplicationWindow {
         var joined = ListArrays.join (" · ", parts);
         subtitle_label.label = joined;
         subtitle_label.visible = joined != "";
-
-        /* Cost and token readout for the toolbar: plain units instead of
-         *  a glyph, and cents-precision once the cost is worth showing. */
-        var status = new StringBuilder ();
-        if (session.cost >= 0.01) {
-            status.append ("$%.2f".printf (session.cost));
-        } else if (session.cost > 0) {
-            status.append ("$%.4f".printf (session.cost));
-        }
-        if (session.input_tokens > 0) {
-            if (status.len > 0) {
-                status.append (" · ");
-            }
-            status.append (@"$(Store.format_tokens (session.input_tokens)) in");
-            if (session.output_tokens > 0) {
-                status.append (@" / $(Store.format_tokens (session.output_tokens)) out");
-            }
-        }
-        composer.set_status_text (status.str);
-    }
-
-    private void update_context_meter () {
-        var store = app.store;
-        if (store.active_session_id == null) {
-            composer.set_context (-1.0, "");
-            return;
-        }
-        /* One call resolves the session and the model once for both the
-         *  bar and the label (they used to repeat the same lookups). */
-        double fraction;
-        string label;
-        store.context_info (store.active_session_id, out fraction, out label);
-        composer.set_context (fraction, label);
     }
 
     private void update_choosers () {
