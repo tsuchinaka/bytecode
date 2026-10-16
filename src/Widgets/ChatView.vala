@@ -21,6 +21,8 @@ public class ChatView : Gtk.Box {
     private Gtk.Button latest_pill;
     private Gee.HashMap<string, MessageBubble> bubbles;
     private Gee.HashMap<string, SystemDivider> dividers;
+    /** The user's own turns, by message id (see UserBubble). */
+    private Gee.HashMap<string, UserBubble> user_bubbles;
     /** One card per changed file, updated in place as a turn keeps
      *  writing it (see set_file_change). */
     private Gee.HashMap<string, ChangeCard> changes;
@@ -61,6 +63,7 @@ public class ChatView : Gtk.Box {
         );
         bubbles = new Gee.HashMap<string, MessageBubble> ();
         dividers = new Gee.HashMap<string, SystemDivider> ();
+        user_bubbles = new Gee.HashMap<string, UserBubble> ();
         changes = new Gee.HashMap<string, ChangeCard> ();
         change_order = new Gee.ArrayList<string> ();
         pending_models = new Gee.HashMap<string, string> ();
@@ -145,6 +148,7 @@ public class ChatView : Gtk.Box {
         }
         bubbles.clear ();
         dividers.clear ();
+        user_bubbles.clear ();
         changes.clear ();
         change_order.clear ();
         pending_models.clear ();
@@ -294,7 +298,8 @@ public class ChatView : Gtk.Box {
     }
 
     public void add_message (Message message, bool force_scroll = false) {
-        if (bubbles.has_key (message.id) || dividers.has_key (message.id)) {
+        if (bubbles.has_key (message.id) || dividers.has_key (message.id)
+            || user_bubbles.has_key (message.id)) {
             return;
         }
         if (!message.renderable) {
@@ -322,6 +327,22 @@ public class ChatView : Gtk.Box {
             pin_pending_last ();
             if (!force_scroll) {
                 pending_top_widget = divider;
+            }
+            scroll_to_bottom (force_scroll);
+            return;
+        }
+
+        if (message.role == MessageRole.USER) {
+            var user_bubble = new UserBubble (message);
+            user_bubbles[message.id] = user_bubble;
+            message_box.append (user_bubble);
+            if (bulk_loading) {
+                return;
+            }
+            user_bubble.add_css_class ("chat-arrive");
+            pin_pending_last ();
+            if (!force_scroll) {
+                pending_top_widget = user_bubble;
             }
             scroll_to_bottom (force_scroll);
             return;
