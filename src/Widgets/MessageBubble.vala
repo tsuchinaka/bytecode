@@ -24,6 +24,10 @@ public class MessageBubble : Gtk.Box {
     private ReasoningBubble reasoning;
     private Gee.HashMap<string, string> live_tools;
     private Gee.HashMap<string, string> live_tool_names;
+    /** Call ids of the tools still running, in start order, so the live
+     *  line can name the most recent one instead of whichever the map
+     *  happens to hand back. */
+    private Gee.ArrayList<string> live_tool_order;
     private string live_last_tool = "";
     private string live_phase = "";
     private Gtk.Box tool_box;
@@ -79,6 +83,7 @@ public class MessageBubble : Gtk.Box {
         tool_cards = new Gee.HashMap<string, ToolCard> ();
         live_tools = new Gee.HashMap<string, string> ();
         live_tool_names = new Gee.HashMap<string, string> ();
+        live_tool_order = new Gee.ArrayList<string> ();
         rendered_blocks = new Gee.ArrayList<Markdown.Block> ();
         block_widgets = new Gee.ArrayList<Gtk.Widget> ();
         if (message.created > 0) {
@@ -101,12 +106,22 @@ public class MessageBubble : Gtk.Box {
             visible = false
         };
         meta_label.add_css_class ("message-meta");
+        /* Both roles are labelled, from history and while streaming:
+         *  live turns learn the model from the event stream, history
+         *  from the message itself, and an unknown model falls back to
+         *  the time so the line never disappears between the two. */
+        var stamp = message.created > 0
+            ? new DateTime.from_unix_local (message.created / 1000).format ("%H:%M")
+            : "";
         if (message.role == MessageRole.USER) {
-            /* Mirror the assistant's "Assistant · model" line so turns
-             * stay scannable: who said it and when. */
-            if (message.created > 0) {
-                var time = new DateTime.from_unix_local (message.created / 1000);
-                meta_label.label = @"You · $(time.format ("%H:%M"))";
+            meta_label.label = stamp != "" ? @"You · $stamp" : "You";
+            meta_label.visible = true;
+        } else {
+            var model = message.model;
+            if (model != "") {
+                meta_label.label = @"Assistant · $model";
+            } else if (stamp != "") {
+                meta_label.label = @"Assistant · $stamp";
             }
             meta_label.visible = true;
         }
@@ -316,7 +331,10 @@ public class MessageBubble : Gtk.Box {
      * thinking spinner stops, and any tool card left running (abort)
      * is settled so no spinner is left standing anywhere. */
     public void finish_live () {
-        live.set_done ();
+        /* A finished line reading "Writing the answer…" describes
+         *  nothing the message above it does not already say, so that
+         *  one is dropped; tool activity stays as the turn's summary. */
+        live.set_done (live_phase != "text");
         reasoning.finish_reasoning ();
         foreach (var card in tool_cards.values) {
             if (card.current_status == ToolStatus.RUNNING) {
@@ -329,6 +347,14 @@ public class MessageBubble : Gtk.Box {
             cancel_queued_render ();
             render_text ();
         }
+    }
+
+    /** Cancels any queued coalesced render: the coalescing timer holds
+     *  a reference to this widget, so it must not keep working (or keep
+     *  the bubble alive) after the view dropped it. */
+    public override void dispose () {
+        cancel_queued_render ();
+        base.dispose ();
     }
 
     /** One-line "what is it doing now" from the latest live phase.
@@ -367,6 +393,9 @@ public class MessageBubble : Gtk.Box {
         live_tool_names[call_id] = ToolCard.display_name (tool_name);
         live_last_tool = live_tool_names[call_id] + "…";
         live_tools[call_id] = live_last_tool;
+        if (!live_tool_order.contains (call_id)) {
+            live_tool_order.add (call_id);
+        }
         live_phase = "tool";
         refresh_live_status ();
     }
@@ -399,12 +428,13 @@ public class MessageBubble : Gtk.Box {
         card.set_status (error ? ToolStatus.ERROR : ToolStatus.DONE);
         live_tools.unset (call_id);
         live_tool_names.unset (call_id);
+        live_tool_order.remove (call_id);
         if (live_phase == "tool") {
-            if (live_tools.size > 0) {
-                foreach (var entry in live_tools.values) {
-                    live_last_tool = entry;
-                    break;
-                }
+            if (live_tool_order.size > 0) {
+                /* The newest tool still running describes the turn. */
+                var newest = live_tool_order[live_tool_order.size - 1];
+                live_last_tool = live_tools.has_key (newest)
+                    ? live_tools[newest] : live_last_tool;
             } else if (text_seen) {
                 live_phase = "text";
             } else {

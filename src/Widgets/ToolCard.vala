@@ -27,7 +27,9 @@ public class ToolCard : Gtk.Box {
     private Gtk.Label input_label;
     private Gtk.Label output_label;
     private Gtk.FlowBox files_box;
-    private bool has_details = false;
+    /** True once an input summary arrived. Until then the placeholder
+     *  describes a running tool and must not outlive it. */
+    private bool summary_seen = false;
 
     public ToolCard (string tool_name) {
         Object (
@@ -266,6 +268,7 @@ public class ToolCard : Gtk.Box {
             return;
         }
         last_input_summary = summary;
+        summary_seen = true;
         summary_label.label = summary;
         input_label.label = summary;
         input_label.visible = true;
@@ -298,10 +301,19 @@ public class ToolCard : Gtk.Box {
             case ToolStatus.DONE:
                 status_icon.icon_name = "process-completed";
                 status_stack.visible_child_name = "done";
+                /* A tool that never reported an input kept its
+                 *  "Working…" placeholder: it would otherwise still read
+                 *  as running now that it is finished. */
+                if (!summary_seen) {
+                    summary_label.visible = false;
+                }
                 break;
             case ToolStatus.ERROR:
                 status_icon.icon_name = "dialog-warning";
                 status_stack.visible_child_name = "done";
+                if (!summary_seen) {
+                    summary_label.visible = false;
+                }
                 if (error_text != null && error_text.strip () != "") {
                     output_label.label = error_text;
                     output_label.visible = true;
@@ -330,11 +342,11 @@ public class ToolCard : Gtk.Box {
         });
     }
 
+    /** Shows the details expander exactly when it has something in it.
+     *  Recomputed rather than latched: files can arrive after the text
+     *  and a card whose details emptied must lose the expander. */
     private void refresh_details () {
-        if (has_details) {
-            return;
-        }
-        has_details = input_label.visible || output_label.visible || files_box.visible;
+        var has_details = input_label.visible || output_label.visible || files_box.visible;
         details_expander.visible = has_details;
     }
 

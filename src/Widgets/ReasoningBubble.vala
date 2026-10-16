@@ -22,6 +22,9 @@ public class ReasoningBubble : Gtk.Box {
     private bool seen = false;
     private bool queued = false;
     private bool finished = false;
+    /** Handle of the queued coalesced render, so a real render that is
+     *  already due can cancel it instead of being overwritten by it. */
+    private uint render_source = 0;
     /** True once the body shows the whole buffer (not a live tail). */
     private bool full_rendered = false;
     /** History text waiting for its first expand: parsing kilobytes
@@ -110,6 +113,7 @@ public class ReasoningBubble : Gtk.Box {
     }
 
     public void set_reasoning (string text) {
+        cancel_queued_render ();
         buffer = new StringBuilder ();
         buffer.append (text);
         full_rendered = false;
@@ -118,7 +122,6 @@ public class ReasoningBubble : Gtk.Box {
         /* Leave the expander state alone: history (fresh widget)
          * stays collapsed, live (already expanded by deltas) stays
          * open. */
-        queued = false;
         if (!seen) {
             return;
         }
@@ -137,7 +140,9 @@ public class ReasoningBubble : Gtk.Box {
         }
         finished = true;
         visible = true;
-        /* Expander state untouched (see set_reasoning). */
+        /* The thought is settled: a queued live render must not land
+         *  after the full text below. */
+        cancel_queued_render ();
         if (duration_label != "") {
             title_label.label = @"Thought for $duration_label";
         } else {
@@ -166,11 +171,28 @@ public class ReasoningBubble : Gtk.Box {
          * is small, throttled once it grows, instead of reformatting
          * the whole buffer on every event. */
         uint delay = buffer.len > FAST_LIMIT ? SLOW_DELAY_MS : 60;
-        GLib.Timeout.add (delay, () => {
+        render_source = GLib.Timeout.add (delay, () => {
+            render_source = 0;
             queued = false;
             render_live ();
             return false;
         });
+    }
+
+    /** Drops a queued live render. Without this a streaming tail can
+     *  land after the full thought was rendered and replace it with the
+     *  capped view. */
+    private void cancel_queued_render () {
+        if (render_source != 0) {
+            GLib.Source.remove (render_source);
+            render_source = 0;
+        }
+        queued = false;
+    }
+
+    public override void dispose () {
+        cancel_queued_render ();
+        base.dispose ();
     }
 
     /** Streaming render, capped to a tail once the thought gets big

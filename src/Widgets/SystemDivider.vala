@@ -97,8 +97,11 @@ public class SystemDivider : Gtk.Box {
         summary_expander = new Gtk.Expander ("Summary") {
             child = summary_label,
             visible = false,
-            halign = Gtk.Align.CENTER,
-            margin_top = 4
+            halign = Gtk.Align.FILL,
+            hexpand = true,
+            margin_top = 4,
+            margin_start = 24,
+            margin_end = 24
         };
         append (summary_expander);
 

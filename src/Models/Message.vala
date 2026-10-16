@@ -199,6 +199,11 @@ public class Message : GLib.Object {
     public string id { get; set; default = ""; }
     public MessageRole role { get; set; default = MessageRole.OTHER; }
     public int64 created { get; set; default = 0; }
+    /** Model that produced an assistant turn (`provider/model`), when
+     *  the server reports one. Used for the "Assistant · model" line. */
+    public string model { get; set; default = ""; }
+    /** Agent an assistant turn ran as, when the server reports one. */
+    public string agent { get; set; default = ""; }
     public int64 completed { get; set; default = 0; }
     public string finish { get; set; default = ""; }
     public double cost { get; set; default = 0.0; }
@@ -287,6 +292,20 @@ public class Message : GLib.Object {
         }
 
         var message = new Message () { id = id };
+
+        /* Assistant turns carry the model and agent that produced them,
+         *  which the conversation labels them with. Live turns learn it
+         *  from the event stream, so history reads it here to keep the
+         *  two paths identical. */
+        var turn_model = JsonUtil.object_member (obj, "model");
+        if (turn_model != null) {
+            var model_id = JsonUtil.string_member (turn_model, "id") ?? "";
+            var provider_id = JsonUtil.string_member (turn_model, "providerID") ?? "";
+            if (model_id != "") {
+                message.model = provider_id != "" ? @"$provider_id/$model_id" : model_id;
+            }
+        }
+        message.agent = JsonUtil.string_member (obj, "agent") ?? "";
 
         switch (type) {
             case "user":

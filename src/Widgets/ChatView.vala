@@ -139,6 +139,13 @@ public class ChatView : Gtk.Box {
         dividers.clear ();
         pending_models.clear ();
         latest_pill.visible = false;
+        /* A fresh conversation starts at the bottom: the scroll state
+         *  belongs to the conversation that was just dropped, and
+         *  inheriting "user scrolled up" would open the next session
+         *  part-way with the jump pill showing. */
+        stick_to_bottom = true;
+        pending_top_widget = null;
+        programmatic_scroll = false;
     }
 
     /** Shows the "model is working" footer (spinner + status line),
@@ -350,6 +357,8 @@ public class ChatView : Gtk.Box {
             divider = new SystemDivider (divider_id, icon_name, text, status);
             dividers[divider_id] = divider;
             message_box.append (divider);
+            /* Live dividers enter like history-added ones. */
+            divider.add_css_class ("chat-arrive");
             pin_pending_last ();
             pending_top_widget = divider;
             scroll_to_bottom ();

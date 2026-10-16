@@ -78,11 +78,17 @@ public class LiveStatus : Gtk.Box {
     /** Freezes the last activity with a check mark. Always stops the
      *  spinner, even while hidden (reasoning hides this line mid-turn):
      *  otherwise a later event could resurrect a spinning line after
-     *  the turn already ended. */
-    public void set_done () {
+     *  the turn already ended. With @keep_summary false the line is
+     *  dropped entirely, for phases that say nothing useful once the
+     *  message itself is on screen. */
+    public void set_done (bool keep_summary = true) {
         finished = true;
         spinner.stop ();
         if (!visible) {
+            return;
+        }
+        if (!keep_summary) {
+            visible = false;
             return;
         }
         indicator.visible_child_name = "done";
