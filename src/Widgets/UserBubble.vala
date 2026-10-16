@@ -26,8 +26,7 @@ public class UserBubble : Gtk.Box {
             hexpand: false
         );
         if (message.created > 0) {
-            var time = new DateTime.from_unix_local (message.created / 1000);
-            tooltip_text = time.format ("%Y-%m-%d %H:%M");
+            tooltip_text = message.date_stamp;
         }
 
         var content = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
@@ -35,9 +34,7 @@ public class UserBubble : Gtk.Box {
         content.add_css_class ("user-bubble");
         this.content = content;
 
-        var stamp = message.created > 0
-            ? new DateTime.from_unix_local (message.created / 1000).format ("%H:%M")
-            : "";
+        var stamp = message.time_stamp;
         var meta_label = new Gtk.Label (stamp != "" ? @"You · $stamp" : "You") {
             xalign = 1
         };

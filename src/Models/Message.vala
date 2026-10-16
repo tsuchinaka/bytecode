@@ -222,6 +222,27 @@ public class Message : GLib.Object {
         parts = new Gee.ArrayList<MessagePart> ();
     }
 
+    /** "HH:MM" in local time, or "" when the server sent no stamp.
+     *  Both bubbles label their turns with this. */
+    public string time_stamp {
+        owned get {
+            if (created <= 0) {
+                return "";
+            }
+            return new DateTime.from_unix_local (created / 1000).format ("%H:%M");
+        }
+    }
+
+    /** Full local date for the bubble tooltip. */
+    public string date_stamp {
+        owned get {
+            if (created <= 0) {
+                return "";
+            }
+            return new DateTime.from_unix_local (created / 1000).format ("%Y-%m-%d %H:%M");
+        }
+    }
+
     public string plain_text {
         owned get {
             var builder = new StringBuilder ();
