@@ -193,9 +193,28 @@ public class ModelIcons : GLib.Object {
     /** Colored brand icon, used across the whole UI (picker, sidebar
      *  avatars, bubbles, panels) so provider identity is consistent. */
     public static string icon_for (string provider_id, string model_id, string name = "", string family = "") {
+        /* Lazily built: a static field initializer is not guaranteed to
+         *  have run when a static method of the same class is the first
+         *  thing that touches the class. */
+        if (icon_cache == null) {
+            icon_cache = new Gee.HashMap<string, string> ();
+        }
+        /* Memoized: this runs once per sidebar row per event (plus
+         *  every picker row and bubble), and each call otherwise
+         *  lowercases and concatenates four strings and runs ~40
+         *  substring searches. The key is every input that can change
+         *  the outcome. */
+        var key = provider_id + "\x1f" + model_id + "\x1f" + name + "\x1f" + family;
+        if (icon_cache.has_key (key)) {
+            return icon_cache[key];
+        }
         var base_name = base_for (provider_id, model_id, name, family);
-        return base_name != "" ? base_name : FALLBACK;
+        var resolved = base_name != "" ? base_name : FALLBACK;
+        icon_cache[key] = resolved;
+        return resolved;
     }
+
+    private static Gee.HashMap<string, string>? icon_cache = null;
 
     /** Symbolic (theme-recolored) variant, kept for contexts that need
      *  a monochrome icon. */

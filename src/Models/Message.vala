@@ -114,7 +114,9 @@ public class FileAttachment : GLib.Object {
                 uint8[] contents;
                 string? etag;
                 var file = GLib.File.new_for_uri (uri);
-                file.load_contents (null, out contents, out etag);
+                /* The vapi maps this to an out uint8[], which Gio's
+                 * char** prototype does not accept (see gtk-compat.c). */
+                OpenClient.file_load_contents_raw (file, null, out contents, out etag);
                 bytes = contents;
             } catch (Error e) {
                 warning ("Could not load attachment %s: %s", uri, e.message);
@@ -148,13 +150,11 @@ public class FileAttachment : GLib.Object {
     /** Decodes the attachment on a worker thread; the pixbuf is safe to
      *  turn into a texture on the main thread once this resumes. */
     public async Gdk.Pixbuf? load_pixbuf_async (int max_px = 320) {
-        SourceFunc callback = load_pixbuf_async.callback;
         Gdk.Pixbuf? pixbuf = null;
 
-        Work.submit (() => {
+        Work.submit_with_resume (() => {
             pixbuf = load_pixbuf (max_px);
-            Work.resume (callback);
-        });
+        }, load_pixbuf_async.callback);
 
         yield;
         return pixbuf;

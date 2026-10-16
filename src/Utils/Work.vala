@@ -27,6 +27,33 @@ class WorkJobHolder : GLib.Object {
     }
 }
 
+/** Carries a coroutine's resume callback across something that cannot
+ *  reach the coroutine: a worker job, or a signal handler that runs
+ *  before the coroutine continues. Delegates cannot be copied in Vala,
+ *  so the holder is an object and the callback is only read back on the
+ *  main context. */
+internal class IdleResume : GLib.Object {
+    private SourceFunc? callback;
+
+    public IdleResume (owned SourceFunc callback) {
+        this.callback = (owned) callback;
+    }
+
+    /** Resumes the coroutine on the main context. */
+    public void resume_now () {
+        Idle.add (on_idle);
+    }
+
+    private bool on_idle () {
+        if (callback == null) {
+            return Source.REMOVE;
+        }
+        callback ();
+        callback = null;
+        return Source.REMOVE;
+    }
+}
+
 public class Work : GLib.Object {
     private static GLib.ThreadPool<WorkJobHolder>? pool = null;
 
@@ -52,14 +79,16 @@ public class Work : GLib.Object {
         }
     }
 
-    /** Resumes a coroutine's `SourceFunc` on the main context. Safe to
-     *  call from a worker thread. */
-    public static void resume (owned SourceFunc callback) {
-        Idle.add (() => {
-            callback ();
-            return false;
+    /** Runs `job` on a worker thread and resumes the calling coroutine
+     *  on the main context when it finishes. Both delegates are passed
+     *  as arguments: capturing a coroutine callback inside the job
+     *  closure would have to copy a delegate, which Vala cannot do. */
+    public static void submit_with_resume (owned WorkJob job, owned SourceFunc callback) {
+        var resume = new IdleResume ((owned) callback);
+        submit (() => {
+            job ();
+            resume.resume_now ();
         });
     }
 }
-
 }

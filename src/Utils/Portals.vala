@@ -37,7 +37,7 @@ public class Portals : GLib.Object {
         return GLib.File.new_for_uri (uris[0]).get_path ();
     }
 
-    /** Multi image picker with an image/* filter. Returns the chosen
+    /** Multi image picker filtering for image files. Returns the chosen
      *  files, or null when cancelled or unavailable. */
     public static async Gee.ArrayList<GLib.File>? pick_images (string title = "Attach images") {
         var filters = new VariantBuilder (new VariantType ("a(sa(us))"));
@@ -62,6 +62,71 @@ public class Portals : GLib.Object {
             files.add (GLib.File.new_for_uri (uri));
         }
         return files;
+    }
+
+    /** Save dialog (portal FileChooser SaveFile) that writes @contents
+     *  to the chosen path. Returns true when saved, false when
+     *  cancelled or when the write failed. */
+    public static async bool save_file (string title, string suggested_name, string contents) {
+        var options = new VariantBuilder (VariantType.VARDICT);
+        options.add ("{sv}", "accept_label", new Variant.string ("_Save"));
+        if (suggested_name != "") {
+            options.add ("{sv}", "current_name", new Variant.string (suggested_name));
+        }
+        var uri = yield save_choose (title, options.end ());
+        if (uri == null) {
+            return false;
+        }
+        var path = GLib.File.new_for_uri (uri).get_path ();
+        if (path == null) {
+            return false;
+        }
+        try {
+            GLib.FileUtils.set_contents (path, contents);
+            return true;
+        } catch (Error e) {
+            warning ("Save failed: %s", e.message);
+            return false;
+        }
+    }
+
+    private static async string? save_choose (string title, Variant options) {
+        GLib.DBusConnection conn;
+        try {
+            conn = GLib.Bus.get_sync (GLib.BusType.SESSION);
+        } catch (Error e) {
+            warning ("No session bus for portal: %s", e.message);
+            return null;
+        }
+        string handle;
+        try {
+            var call = new VariantBuilder (new VariantType ("(ssa{sv})"));
+            call.add ("s", "");
+            call.add ("s", title);
+            call.add_value (options);
+            var reply = yield conn.call (
+                BUS_NAME, OBJECT_PATH, FILE_CHOOSER, "SaveFile",
+                call.end (),
+                new VariantType ("(o)"),
+                GLib.DBusCallFlags.NONE, -1, null
+            );
+            handle = reply.get_child_value (0).get_string ();
+        } catch (Error e) {
+            warning ("Portal save dialog failed: %s", e.message);
+            return null;
+        }
+        uint code;
+        Variant? results;
+        yield wait_for_response (conn, handle, out code, out results);
+        if (code != 0 || results == null) {
+            return null;
+        }
+        var uris = results.lookup_value ("uris", VariantType.STRING_ARRAY);
+        if (uris == null) {
+            return null;
+        }
+        var raw = uris.get_strv ();
+        return raw.length > 0 ? raw[0] : null;
     }
 
     /** Opens a file with its default application (portal OpenURI). */
@@ -113,7 +178,15 @@ public class Portals : GLib.Object {
         if (uris == null) {
             return null;
         }
-        return uris.get_strv ();
+        /* get_strv() hands back the variant's own (const) memory: copy
+         *  into our own array so the caller is not tied to the variant
+         *  outliving it, and so the const matches string[]. */
+        var raw = uris.get_strv ();
+        var result = new string[raw.length];
+        for (int i = 0; i < raw.length; i++) {
+            result[i] = raw[i];
+        }
+        return result;
     }
 
     private static async bool open_fd (string method, string path, bool directory) {
