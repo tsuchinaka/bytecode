@@ -495,6 +495,24 @@ public class MainWindow : Gtk.ApplicationWindow {
         titlebar = new Gtk.Grid () { visible = false };
         child = overlay;
 
+        /* Escape stops the turn. It sits on the window so the
+         *  composer's capture-phase controller gets it first: there it
+         *  only swallows Escape while the slash-command list is up.
+         *  Dialogs are their own windows, so Escape still just closes
+         *  them. */
+        var esc = new Gtk.ShortcutController ();
+        esc.add_shortcut (new Gtk.Shortcut (
+            new Gtk.KeyvalTrigger (Gdk.Key.Escape, Gdk.ModifierType.NO_MODIFIER_MASK),
+            new Gtk.CallbackAction ((widget, args) => {
+                if (!app.store.is_active_running) {
+                    return false;
+                }
+                app.store.stop_or_interrupt ();
+                return true;
+            })
+        ));
+        add_controller (esc);
+
         /* Window actions are registered in setup_actions () */
     }
 
