@@ -471,10 +471,10 @@ levelbar.context-full block.filled {
 }
 
 
-.diff-chip-label {
-  font-family: monospace;
-  font-size: 0.85em;
-  font-weight: bold;
+/* The changed-files chip: numbers carry the diff colours, the file
+ * count is a quiet caption. */
+.diff-chip {
+  font-size: 0.9em;
 }
 
 /* ------------------------------------------------------- permission */

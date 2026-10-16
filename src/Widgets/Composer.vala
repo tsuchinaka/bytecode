@@ -58,7 +58,9 @@ public class Composer : Gtk.Box {
     private Gtk.Box? diff_row = null;
     private Gtk.Label? diff_editing_label = null;
     private Gtk.Box diff_list_box;
-    private Gtk.Label diff_chip_label;
+    private Gtk.Label diff_chip_add;
+    private Gtk.Label diff_chip_del;
+    private Gtk.Label diff_chip_count;
     private Gtk.Spinner diff_chip_spinner;
     private Gtk.Button permission_mode_button;
     private string permission_mode = "ask";
@@ -360,16 +362,26 @@ public class Composer : Gtk.Box {
         var diff_chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
             valign = Gtk.Align.CENTER
         };
+        diff_chip_box.add_css_class ("diff-chip");
         diff_chip_spinner = new Gtk.Spinner () {
             visible = false,
             tooltip_text = "Editing a file"
         };
-        diff_chip_label = new Gtk.Label ("") {
-            valign = Gtk.Align.CENTER
+        /* Same colouring as every other diff readout in the app, and a
+         *  count of zero stays out of the way instead of reading
+         *  "+5 −0". */
+        diff_chip_add = chip_count ("diff-add");
+        diff_chip_del = chip_count ("diff-del");
+        diff_chip_count = new Gtk.Label ("") {
+            valign = Gtk.Align.CENTER,
+            margin_start = 2
         };
-        diff_chip_label.add_css_class ("diff-chip-label");
+        diff_chip_count.add_css_class (Granite.CssClass.DIM);
+        diff_chip_count.add_css_class ("caption");
         diff_chip_box.append (diff_chip_spinner);
-        diff_chip_box.append (diff_chip_label);
+        diff_chip_box.append (diff_chip_add);
+        diff_chip_box.append (diff_chip_del);
+        diff_chip_box.append (diff_chip_count);
         diff_button.child = diff_chip_box;
 
         diff_list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
@@ -637,7 +649,13 @@ public class Composer : Gtk.Box {
             deletions += diff.deletions;
         }
         diff_row.visible = true;
-        diff_chip_label.label = @"+$additions −$deletions · $(files.size)";
+        diff_chip_add.label = @"+$additions";
+        diff_chip_del.label = @"−$deletions";
+        /* Zero counts say nothing worth the pixels: a file with only
+         *  additions reads "+5 · 1", not "+5 −0 · 1". */
+        diff_chip_add.visible = additions > 0;
+        diff_chip_del.visible = deletions > 0;
+        diff_chip_count.label = @"· $(files.size)";
         diff_button.tooltip_text = files.size == 1
             ? "1 file changed in this session"
             : @"$(files.size) files changed in this session";
@@ -684,6 +702,17 @@ public class Composer : Gtk.Box {
         diff_list_box.append (open_button);
     }
 
+    /** One +/− number on the chip, hidden until it has something to
+     *  say. */
+    private static Gtk.Label chip_count (string css_class) {
+        var label = new Gtk.Label ("") {
+            valign = Gtk.Align.CENTER,
+            visible = false
+        };
+        label.add_css_class (css_class);
+        return label;
+    }
+
     /** One changed file: status icon, name, +/− counts and a spinner
      *  while it is being written. Negative counts mean "unknown yet". */
     private static Gtk.Widget diff_file_row (string path, int additions, int deletions,
@@ -721,12 +750,12 @@ public class Composer : Gtk.Box {
         };
         row.append (name_label);
 
-        if (additions >= 0) {
+        if (additions > 0) {
             var add_label = new Gtk.Label (@"+$additions");
             add_label.add_css_class ("diff-add");
             row.append (add_label);
         }
-        if (deletions >= 0) {
+        if (deletions > 0) {
             var del_label = new Gtk.Label (@"−$deletions");
             del_label.add_css_class ("diff-del");
             row.append (del_label);

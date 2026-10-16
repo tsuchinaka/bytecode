@@ -272,13 +272,14 @@ public class SessionPanel : Gtk.Box {
         name.add_css_class ("caption");
         row.append (name);
 
-        if (additions >= 0) {
+        /* Zero counts are noise: a file with only additions reads "+5". */
+        if (additions > 0) {
             var add_label = new Gtk.Label (@"+$additions");
             add_label.add_css_class ("caption");
             add_label.add_css_class ("diff-add");
             row.append (add_label);
         }
-        if (deletions >= 0) {
+        if (deletions > 0) {
             var del_label = new Gtk.Label (@"−$deletions");
             del_label.add_css_class ("caption");
             del_label.add_css_class ("diff-del");

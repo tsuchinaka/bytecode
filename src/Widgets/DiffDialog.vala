@@ -125,18 +125,23 @@ public class DiffRow : Gtk.ListBoxRow {
         header.append (path_label);
 
         /* Additions and deletions are separate labels so each can carry
-         * its own colour, the way diff tools show them. */
-        var add_label = new Gtk.Label (@"+$(diff.additions)") {
-            valign = Gtk.Align.CENTER
-        };
-        add_label.add_css_class ("diff-add");
-        header.append (add_label);
+         * its own colour, the way diff tools show them. A side with
+         * nothing on it is left out rather than shown as "+0". */
+        if (diff.additions > 0) {
+            var add_label = new Gtk.Label (@"+$(diff.additions)") {
+                valign = Gtk.Align.CENTER
+            };
+            add_label.add_css_class ("diff-add");
+            header.append (add_label);
+        }
 
-        var del_label = new Gtk.Label (@"−$(diff.deletions)") {
-            valign = Gtk.Align.CENTER
-        };
-        del_label.add_css_class ("diff-del");
-        header.append (del_label);
+        if (diff.deletions > 0) {
+            var del_label = new Gtk.Label (@"−$(diff.deletions)") {
+                valign = Gtk.Align.CENTER
+            };
+            del_label.add_css_class ("diff-del");
+            header.append (del_label);
+        }
 
         var expander = new Gtk.Expander ("Diff") {
             margin_start = 6,
