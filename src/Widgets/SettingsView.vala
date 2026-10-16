@@ -16,9 +16,17 @@
 
 namespace OpenClient {
 
+/* H4-sized text. Granite moved this from a CSS-class constant to
+ * HeaderLabel.Size, which only works on Granite.HeaderLabel widgets;
+ * these are plain Gtk.Labels, so the theme class (what
+ * Granite.STYLE_CLASS_H4_LABEL expands to, and what
+ * Granite.HeaderLabel.Size.H4 applies) is used directly. */
+internal const string TITLE_4_CSS_CLASS = "title-4";
+
 public class SettingsView : Gtk.Box {
     private Config config;
     private Store store;
+    private ServerProcess server;
     private Client? client;
 
     private Granite.ValidatedEntry host_entry;
@@ -27,34 +35,47 @@ public class SettingsView : Gtk.Box {
     private Gtk.Entry workspace_entry;
 
     private Gtk.Label connection_status_label;
+    /* App-owned server (ServerProcess): the switch, its settings and the
+     *  live state line. */
+    private Gtk.Switch managed_switch;
+    private Gtk.Box managed_section;
+    private Gtk.Box manual_section;
+    private Gtk.Entry server_command_entry;
+    private Gtk.Entry server_port_entry;
+    private Gtk.Entry server_password_entry;
+    private Gtk.Label server_state_label;
     private Gtk.Image connection_status_icon;
     private Gtk.Label server_version_label;
+    private Gtk.Label service_watch_label;
+    private bool service_watch_connected = false;
     private Gtk.Button test_button;
 
     private Gtk.ToggleButton theme_system_button;
     private Gtk.ToggleButton theme_light_button;
     private Gtk.ToggleButton theme_dark_button;
 
-    private Granite.SwitchModelButton notify_turns_switch;
-    private Granite.SwitchModelButton notify_permissions_switch;
-    private Granite.SwitchModelButton notify_questions_switch;
+    private Gtk.Switch notify_turns_switch;
+    private Gtk.Switch notify_permissions_switch;
+    private Gtk.Switch notify_questions_switch;
 
-    private StatusList providers_page;
-    private StatusList credentials_page;
-    private StatusList mcp_page;
-    private StatusList worktrees_page;
+    private Gtk.Box providers_box;
+    private Gtk.Box credentials_box;
+    private Gtk.Box mcp_box;
+    private Gtk.Box worktrees_box;
 
     private Gtk.ListBox category_list;
     private Gtk.Stack content_stack;
-    private Gtk.Label providers_desc_label;
 
     /** Watches the server config file for outside edits. */
     private GLib.FileMonitor? config_monitor = null;
+    /** Watches the custom-agents directory (new/edited/removed agent
+     *  files change the picker without touching opencode.jsonc). */
+    private GLib.FileMonitor? agents_monitor = null;
     private uint config_debounce = 0;
 
     private string project_id = "";
 
-    public SettingsView (Config config, Store store) {
+    public SettingsView (Config config, Store store, ServerProcess server) {
         Object (
             orientation: Gtk.Orientation.HORIZONTAL,
             spacing: 0,
@@ -63,6 +84,7 @@ public class SettingsView : Gtk.Box {
         );
         this.config = config;
         this.store = store;
+        this.server = server;
         this.client = store.client;
 
         category_list = new Gtk.ListBox () {
@@ -123,6 +145,11 @@ public class SettingsView : Gtk.Box {
                 load_providers.begin ();
             }
         });
+        store.mcp_changed.connect (() => {
+            if (content_stack.visible_child_name == "mcp") {
+                load_mcp.begin ();
+            }
+        });
         watch_server_config ();
         load_all.begin ();
     }
@@ -132,6 +159,10 @@ public class SettingsView : Gtk.Box {
             config_monitor.cancel ();
             config_monitor = null;
         }
+        if (agents_monitor != null) {
+            agents_monitor.cancel ();
+            agents_monitor = null;
+        }
         if (config_debounce != 0) {
             GLib.Source.remove (config_debounce);
             config_debounce = 0;
@@ -139,19 +170,33 @@ public class SettingsView : Gtk.Box {
         base.dispose ();
     }
 
-    /** Reloads server-side lists the moment the server config file
-     *  changes on disk — edited here, in an editor, or via CLI, the
-     *  page follows in real time with no polling. */
+    /** Reloads the server config file and the custom-agents directory
+     *  for outside edits — edited here, in an editor, or via CLI, the
+     *  app follows in real time with no polling. */
     private void watch_server_config () {
-        var path = GLib.Path.build_filename (
-            GLib.Environment.get_user_config_dir (), "opencode", "opencode.jsonc");
+        var dir = GLib.Path.build_filename (
+            GLib.Environment.get_user_config_dir (), "opencode");
+        watch_path (GLib.Path.build_filename (dir, "opencode.jsonc"), true);
+        watch_path (GLib.Path.build_filename (dir, "agents"), false);
+    }
+
+    /** Watches one config path (file or directory) with the shared
+     *  debounced refresh. Missing paths are skipped silently. */
+    private void watch_path (string path, bool is_file) {
         var file = GLib.File.new_for_path (path);
         try {
             if (!file.query_exists ()) {
                 return;
             }
-            config_monitor = file.monitor_file (GLib.FileMonitorFlags.NONE);
-            config_monitor.changed.connect (() => {
+            var monitor = is_file
+                ? file.monitor_file (GLib.FileMonitorFlags.NONE)
+                : file.monitor_directory (GLib.FileMonitorFlags.NONE);
+            if (is_file) {
+                config_monitor = monitor;
+            } else {
+                agents_monitor = monitor;
+            }
+            monitor.changed.connect (() => {
                 if (config_debounce != 0) {
                     return;
                 }
@@ -162,18 +207,23 @@ public class SettingsView : Gtk.Box {
                 });
             });
         } catch (Error e) {
-            warning ("Could not watch server config: %s", e.message);
+            warning ("Could not watch %s: %s", path, e.message);
         }
     }
 
     private void refresh_from_disk () {
         client = store.client;
+        update_server_state ();
         if (client == null) {
             return;
         }
         load_providers.begin ();
         load_credentials.begin ();
         store.load_models.begin ();
+        /* Agents live in the watched paths too (custom agents are files
+         *  under agents/): without this the picker keeps the set from
+         *  connect time until the next restart. */
+        store.load_agents.begin ();
         store.notice ("Server configuration reloaded");
     }
 
@@ -183,10 +233,61 @@ public class SettingsView : Gtk.Box {
         host_entry.text = config.host;
         port_entry.text = config.port.to_string ();
         password_entry.text = config.password;
+        server_command_entry.text = config.server_command;
+        server_port_entry.text = config.server_port.to_string ();
+        server_password_entry.text = config.server_password;
+        managed_switch.active = config.manage_server;
+        sync_connection_mode ();
         workspace_entry.text = config.workspace_directory;
         sync_theme_buttons ();
         update_connection_status ();
+        update_service_watch ();
         load_all.begin ();
+    }
+
+    /** Background-service tap line (see ServiceWatcher): terminal
+     *  turns move this app's indicators while it is watching. */
+    private void update_service_watch () {
+        var watcher = store.service_watcher;
+        if (watcher == null) {
+            service_watch_label.label = "";
+            service_watch_label.visible = false;
+            return;
+        }
+        if (!service_watch_connected) {
+            service_watch_connected = true;
+            watcher.state_changed.connect (() => update_service_watch ());
+        }
+        if (watcher.watching && watcher.detail != "") {
+            service_watch_label.label = watcher.detail + ".";
+            service_watch_label.visible = true;
+        } else {
+            service_watch_label.label = "No background service detected; only this app's own turns move the indicators.";
+            service_watch_label.visible = true;
+        }
+    }
+
+    /** One line under the app-server settings: what the server is doing
+     *  right now, or where it stopped. */
+    private void update_server_state () {
+        switch (server.state) {
+            case ServerState.RUNNING:
+                server_state_label.label = server.detail;
+                server_state_label.remove_css_class (Granite.CssClass.ERROR);
+                break;
+            case ServerState.STARTING:
+                server_state_label.label = server.detail;
+                server_state_label.remove_css_class (Granite.CssClass.ERROR);
+                break;
+            case ServerState.FAILED:
+                server_state_label.label = server.detail;
+                server_state_label.add_css_class (Granite.CssClass.ERROR);
+                break;
+            default:
+                server_state_label.label = @"Not running on port $(config.server_port)";
+                server_state_label.remove_css_class (Granite.CssClass.ERROR);
+                break;
+        }
     }
 
     private Gtk.ListBoxRow add_category (Gtk.ListBoxRow? first, string id, string title, string icon_name) {
@@ -197,16 +298,16 @@ public class SettingsView : Gtk.Box {
         return first ?? wrapper;
     }
 
-    /* -- page scaffolding (elementary pattern: H2 title with dim
-     *  subtitle, then card groups each led by an H4 section label) -- */
+    /* -- page scaffolding (pantheon-tweaks pattern: H2 title with dim
+     *  subtitle, then flat rows — a HeaderLabel carrying title plus
+     *  description with the control at the end. No cards; the side
+     *  margins live on the content container, not on every row.) -- */
 
     private static Gtk.Widget page_header (string title, string description) {
         var header = new Granite.HeaderLabel (title) {
             size = Granite.HeaderLabel.Size.H2,
             secondary_text = description,
             margin_top = 24,
-            margin_start = 24,
-            margin_end = 24,
             margin_bottom = 12
         };
         return header;
@@ -215,8 +316,6 @@ public class SettingsView : Gtk.Box {
     private static Gtk.Widget section_label (string title) {
         var label = new Granite.HeaderLabel (title) {
             margin_top = 18,
-            margin_start = 24,
-            margin_end = 24,
             margin_bottom = 6
         };
         return label;
@@ -227,12 +326,19 @@ public class SettingsView : Gtk.Box {
             hexpand = true,
             vexpand = true
         };
-        box.append (header);
+        var head_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
+            margin_start = 24,
+            margin_end = 24
+        };
+        head_box.append (header);
+        box.append (head_box);
         /* Tall pages (Behavior) must scroll instead of forcing the
          * window to grow beyond its default size. */
         var content = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
             hexpand = true,
             vexpand = true,
+            margin_start = 24,
+            margin_end = 24,
             margin_bottom = 18
         };
         foreach (var section in sections) {
@@ -248,57 +354,51 @@ public class SettingsView : Gtk.Box {
         return box;
     }
 
-    private static Gtk.Box card () {
-        var card = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
-            margin_start = 24,
-            margin_end = 24,
+    /** One pantheon-tweaks setting row: title plus dim description with
+     *  the control at the end, vertically centered. */
+    private static Gtk.Box setting_row (string title, string subtitle, Gtk.Widget control) {
+        var label = new Granite.HeaderLabel (title) {
+            secondary_text = subtitle,
+            hexpand = true
+        };
+        control.valign = Gtk.Align.CENTER;
+        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
+            margin_top = 6,
             margin_bottom = 6
         };
-        card.add_css_class ("card");
-        return card;
-    }
-
-    private delegate void SwitchFlip (bool state);
-
-    /** One Granite switch row: title + dim description with the
-     *  switch at the end, the whole row clickable. */
-    private Granite.SwitchModelButton switch_row (string title, string subtitle,
-        bool initial, SwitchFlip on_flip) {
-        var row = new Granite.SwitchModelButton (title) {
-            description = subtitle,
-            active = initial
-        };
-        row.toggled.connect (() => {
-            on_flip (row.active);
-        });
+        row.append (label);
+        row.append (control);
         return row;
     }
 
-    private Gtk.ListBox card_list () {
-        var list = new Gtk.ListBox () {
-            selection_mode = Gtk.SelectionMode.NONE,
-            show_separators = true
+    /** One switch row in the pantheon-tweaks style: label plus a plain
+     *  Gtk.Switch at the end. Returns the row; the caller connects to
+     *  @sw itself (passing a callback in would have to copy the
+     *  delegate, which Vala cannot do). */
+    private static Gtk.Box switch_row (string title, string subtitle,
+        bool initial, out Gtk.Switch sw) {
+        sw = new Gtk.Switch () {
+            active = initial
         };
-        list.add_css_class ("settings-list");
-        return list;
+        return setting_row (title, subtitle, sw);
     }
 
     /* -- Connection ---------------------------------------------------- */
 
     private Gtk.Widget build_connection_page () {
-        /* Status card: live reachability, refreshed on open/test/save. */
+        /* Status row: live reachability, refreshed on open/test/save. */
         connection_status_icon = new Gtk.Image.from_icon_name ("network-server") {
-            pixel_size = 32,
+            pixel_size = 24,
             valign = Gtk.Align.CENTER
         };
         connection_status_label = new Gtk.Label ("Checking…") {
             xalign = 0
         };
-        connection_status_label.add_css_class (Granite.STYLE_CLASS_H4_LABEL);
+        connection_status_label.add_css_class (TITLE_4_CSS_CLASS);
         server_version_label = new Gtk.Label ("") {
             xalign = 0
         };
-        server_version_label.add_css_class ("dim-label");
+        server_version_label.add_css_class (Granite.CssClass.DIM);
         server_version_label.add_css_class ("caption");
         var texts = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) {
             hexpand = true,
@@ -313,20 +413,28 @@ public class SettingsView : Gtk.Box {
         };
         test_button.clicked.connect (() => test_connection.begin ());
 
-        var status_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-            margin_top = 12,
-            margin_bottom = 12,
-            margin_start = 12,
-            margin_end = 12
+        var status_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
+            margin_top = 6,
+            margin_bottom = 6
         };
-        status_box.append (connection_status_icon);
-        status_box.append (texts);
-        status_box.append (test_button);
-        var status_card = card ();
-        status_card.append (status_box);
+        status_row.append (connection_status_icon);
+        status_row.append (texts);
+        status_row.append (test_button);
 
-        /* Credentials card: entries validate inline (Granite marks
-         *  bad input with an error icon + class as you type). */
+        /* Background-service tap: whether terminal CLIs' turns move
+         *  this app's indicators (see ServiceWatcher). */
+        service_watch_label = new Gtk.Label ("") {
+            xalign = 0,
+            wrap = true,
+            margin_top = 6,
+            margin_bottom = 6
+        };
+        service_watch_label.add_css_class (Granite.CssClass.DIM);
+        service_watch_label.add_css_class ("caption");
+
+        /* Credentials: one label-plus-entry row each (entries validate
+         *  inline — Granite marks bad input with an error icon as you
+         *  type). */
         GLib.Regex? host_regex = null;
         GLib.Regex? port_regex = null;
         try {
@@ -363,29 +471,14 @@ public class SettingsView : Gtk.Box {
             hexpand = true,
             placeholder_text = "Server password"
         };
-
-        var grid = new Gtk.Grid () {
-            row_spacing = 12,
-            column_spacing = 12,
-            margin_top = 12,
-            margin_bottom = 12,
-            margin_start = 12,
-            margin_end = 12
-        };
-        grid.attach (new Gtk.Label ("Host") { xalign = 0, valign = Gtk.Align.CENTER }, 0, 0, 1, 1);
-        grid.attach (host_entry, 1, 0, 2, 1);
-        grid.attach (new Gtk.Label ("Port") { xalign = 0, valign = Gtk.Align.CENTER }, 0, 1, 1, 1);
-        grid.attach (port_entry, 1, 1, 1, 1);
-        grid.attach (new Gtk.Label ("Password") { xalign = 0, valign = Gtk.Align.CENTER }, 0, 2, 1, 1);
-        grid.attach (password_entry, 1, 2, 2, 1);
-        var form_card = card ();
-        form_card.append (grid);
+        var host_row = setting_row ("Host", "Address of the server you run yourself.", host_entry);
+        var port_row = setting_row ("Port", "Port that server listens on.", port_entry);
+        var password_row = setting_row ("Password", "Shown once by `opencode serve`.", password_entry);
 
         var save_button = new Gtk.Button.with_label ("Save & Reconnect") {
             halign = Gtk.Align.START,
-            margin_start = 24,
             margin_top = 6,
-            margin_bottom = 18
+            margin_bottom = 6
         };
         save_button.add_css_class ("suggested-action");
         save_button.clicked.connect (() => {
@@ -409,10 +502,154 @@ public class SettingsView : Gtk.Box {
             save_button.sensitive = can_save_connection ();
         });
 
-        return page_wrap (
-            page_header ("Connection", "Host, port and password for your OpenCode server."),
-            { status_card, section_label ("Server credentials"), form_card, save_button }
+        /* -- app-owned server -------------------------------------- */
+
+        Gtk.Switch managed_sw;
+        var managed_row = switch_row (
+            "Managed Server",
+            "Bytecode starts its own `opencode serve` on a private port with its own passcode.",
+            config.manage_server,
+            out managed_sw
         );
+        managed_switch = managed_sw;
+        managed_switch.notify["active"].connect (() => {
+            var active = managed_switch.active;
+            config.manage_server = active;
+            config.save ();
+            sync_connection_mode ();
+            store.notice (active
+                ? "The app will run its own server"
+                : "Using the server you configure below");
+        });
+
+        server_command_entry = new Gtk.Entry () {
+            text = config.server_command,
+            hexpand = true,
+            placeholder_text = "opencode"
+        };
+        server_port_entry = new Gtk.Entry () {
+            text = config.server_port.to_string (),
+            width_chars = 9,
+            placeholder_text = "4599"
+        };
+        server_password_entry = new Gtk.Entry () {
+            text = config.server_password,
+            visibility = false,
+            hexpand = true,
+            placeholder_text = "generated on first use"
+        };
+        var reveal_passcode = new Gtk.ToggleButton () {
+            icon_name = "view-reveal-symbolic",
+            tooltip_text = "Show the passcode",
+            valign = Gtk.Align.CENTER
+        };
+        reveal_passcode.toggled.connect (() => {
+            server_password_entry.visibility = reveal_passcode.active;
+        });
+
+        var passcode_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            hexpand = true
+        };
+        passcode_box.append (server_password_entry);
+        passcode_box.append (reveal_passcode);
+
+        var command_row = setting_row ("Command", "Binary that serves the API.", server_command_entry);
+        var server_port_row = setting_row ("Port", "Private port for the app's server.", server_port_entry);
+        var passcode_row = setting_row ("Passcode", "Secret the app and its server share.", passcode_box);
+
+        server_state_label = new Gtk.Label ("") {
+            xalign = 0,
+            wrap = true
+        };
+        server_state_label.add_css_class (Granite.CssClass.DIM);
+        server_state_label.add_css_class ("caption");
+
+        var restart_button = new Gtk.Button.with_label ("Apply & Restart Server") {
+            valign = Gtk.Align.CENTER
+        };
+        restart_button.add_css_class ("suggested-action");
+        restart_button.clicked.connect (() => apply_managed_settings.begin ());
+        var log_button = new Gtk.Button.with_label ("Server Log") {
+            valign = Gtk.Align.CENTER,
+            tooltip_text = "Open the app server's log file"
+        };
+        log_button.clicked.connect (() => {
+            Portals.open_file.begin (server.log_path);
+        });
+        var managed_actions = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            margin_top = 6,
+            margin_bottom = 6
+        };
+        managed_actions.append (restart_button);
+        managed_actions.append (log_button);
+
+        managed_section = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
+            visible = config.manage_server,
+            name = "app-server-section"
+        };
+        managed_section.append (command_row);
+        managed_section.append (server_port_row);
+        managed_section.append (passcode_row);
+        managed_section.append (managed_actions);
+        managed_section.append (server_state_label);
+
+        /* -- manually configured server ---------------------------- */
+
+        /* Only the active mode is visible, heading included: the section
+         *  label is inside the section so it can never dangle over
+         *  nothing when the managed server is in use. An off-screen
+         *  Gtk.Stack page would still be measured by GTK, and a hidden
+         *  half of the page would otherwise set the view's minimum
+         *  height. */
+        manual_section = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
+            visible = !config.manage_server,
+            name = "manual-server-section"
+        };
+        manual_section.append (section_label ("Your Own Server"));
+        manual_section.append (host_row);
+        manual_section.append (port_row);
+        manual_section.append (password_row);
+        manual_section.append (save_button);
+
+        return page_wrap (
+            page_header ("Connection", "Bytecode runs its own OpenCode server, or talk to one you run yourself."),
+            { status_row, service_watch_label, managed_row, managed_section, manual_section }
+        );
+    }
+
+
+    /** Shows the settings that belong to the active mode. */
+    private void sync_connection_mode () {
+        managed_section.visible = config.manage_server;
+        manual_section.visible = !config.manage_server;
+        update_connection_status ();
+    }
+
+    /** Saves the app-server settings and restarts the server so they
+     *  take effect, then reconnects. */
+    private async void apply_managed_settings () {
+        config.server_command = server_command_entry.text.strip () != ""
+            ? server_command_entry.text.strip () : "opencode";
+        var parsed = int.parse (server_port_entry.text.strip ());
+        if (parsed > 0 && parsed <= 65535) {
+            config.server_port = (uint) parsed;
+        }
+        if (server_password_entry.text.strip () != "") {
+            config.server_password = server_password_entry.text.strip ();
+        }
+        config.ensure_server_password ();
+        config.save ();
+        server_password_entry.text = config.server_password;
+        server_port_entry.text = config.server_port.to_string ();
+
+        server_state_label.label = "Restarting…";
+        store.notice ("Restarting the app server");
+        var restarted = yield server.restart ();
+        if (restarted) {
+            store.notice ("Server restarted");
+        }
+        yield store.connect_and_load ();
+        refresh ();
     }
 
     /** Save needs a valid host plus a real port number. */
@@ -424,20 +661,27 @@ public class SettingsView : Gtk.Box {
         return parsed > 0 && parsed <= 65535;
     }
 
-    private async void test_connection () {        test_button.sensitive = false;
+    private async void test_connection () {
+        test_button.sensitive = false;
         connection_status_label.label = "Checking…";
         server_version_label.label = "";
+        var use_managed = config.manage_server;
         var probe = new Client (
-            host_entry.text.strip (),
-            (uint) int.max (int.parse (port_entry.text.strip ()), 0),
-            password_entry.text
+            use_managed ? "127.0.0.1" : host_entry.text.strip (),
+            use_managed
+                ? config.server_port
+                : (uint) int.max (int.parse (port_entry.text.strip ()), 0),
+            use_managed ? config.server_password : password_entry.text
         );
         var version = yield probe.version ();
         test_button.sensitive = true;
         if (version != null) {
             set_status (true, "Reachable", @"Server v$version · $(probe.base_url)");
         } else {
-            set_status (false, "Unreachable", @"Could not reach $(probe.base_url)");
+            set_status (false, "Unreachable",
+                use_managed
+                    ? @"Nothing answered on $(probe.base_url) — press Apply & Restart Server"
+                    : @"Could not reach $(probe.base_url)");
         }
         update_connection_status ();
     }
@@ -452,8 +696,11 @@ public class SettingsView : Gtk.Box {
     }
 
     private void update_connection_status () {
+        update_server_state ();
         if (store.client == null) {
-            set_status (false, "Not connected", "Save credentials to connect.");
+            set_status (false, "Not connected", config.manage_server
+                ? @"The app server is not reachable on port $(config.server_port)."
+                : "Save credentials to connect.");
             return;
         }
         set_status (true, "Connected", store.client.base_url);
@@ -478,10 +725,7 @@ public class SettingsView : Gtk.Box {
 
         var segmented = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) {
             halign = Gtk.Align.START,
-            margin_top = 12,
-            margin_bottom = 12,
-            margin_start = 12,
-            margin_end = 12
+            valign = Gtk.Align.CENTER
         };
         segmented.add_css_class ("linked");
         segmented.append (theme_system_button);
@@ -493,12 +737,15 @@ public class SettingsView : Gtk.Box {
         theme_light_button.toggled.connect (() => pick_theme ("light", theme_light_button));
         theme_dark_button.toggled.connect (() => pick_theme ("dark", theme_dark_button));
 
-        var theme_card = card ();
-        theme_card.append (segmented);
+        var theme_row = setting_row (
+            "Color Scheme",
+            "Follow the system style, or force light / dark.",
+            segmented
+        );
 
         return page_wrap (
             page_header ("Appearance", "How the app follows your desktop style."),
-            { section_label ("Color scheme"), theme_card }
+            { theme_row }
         );
     }
 
@@ -536,93 +783,104 @@ public class SettingsView : Gtk.Box {
     /* -- Behavior ------------------------------------------------------ */
 
     private Gtk.Widget build_behavior_page () {
-        /* Notifications card: master plus per-event toggles. */
-        var notify_list = card_list ();
-        notify_list.append (switch_row (
-            "Desktop notifications",
+        /* Notifications group: master plus per-event toggles. */
+        Gtk.Switch master_sw;
+        var notify_master = switch_row (
+            "Desktop Notifications",
             "Bubbles for finished turns, permission requests and questions.",
             config.notifications_enabled,
-            (state) => {
-                config.notifications_enabled = state;
-                config.save ();
-                sync_notify_subs ();
-            }
-        ));
-        notify_turns_switch = notify_switch (notify_list,
-            "Finished turns",
+            out master_sw
+        );
+        master_sw.notify["active"].connect (() => {
+            config.notifications_enabled = master_sw.active;
+            config.save ();
+            sync_notify_subs ();
+        });
+        Gtk.Switch turns_sw;
+        var turns_row = switch_row (
+            "Finished Turns",
             "Notify when a background session finishes its turn.",
             config.notify_turns,
-            (state) => { config.notify_turns = state; config.save (); });
-        notify_permissions_switch = notify_switch (notify_list,
-            "Permission requests",
+            out turns_sw
+        );
+        notify_turns_switch = turns_sw;
+        notify_turns_switch.notify["active"].connect (() => {
+            config.notify_turns = notify_turns_switch.active;
+            config.save ();
+        });
+        Gtk.Switch perms_sw;
+        var perms_row = switch_row (
+            "Permission Requests",
             "Notify when the model asks to run something.",
             config.notify_permissions,
-            (state) => { config.notify_permissions = state; config.save (); });
-        notify_questions_switch = notify_switch (notify_list,
-            "Question prompts",
+            out perms_sw
+        );
+        notify_permissions_switch = perms_sw;
+        notify_permissions_switch.notify["active"].connect (() => {
+            config.notify_permissions = notify_permissions_switch.active;
+            config.save ();
+        });
+        Gtk.Switch questions_sw;
+        var questions_row = switch_row (
+            "Question Prompts",
             "Notify when the model waits for your answer.",
             config.notify_questions,
-            (state) => { config.notify_questions = state; config.save (); });
-        var notify_card = card ();
-        notify_card.append (notify_list);
+            out questions_sw
+        );
+        notify_questions_switch = questions_sw;
+        notify_questions_switch.notify["active"].connect (() => {
+            config.notify_questions = notify_questions_switch.active;
+            config.save ();
+        });
 
-        var chat_list = card_list ();
-        chat_list.append (switch_row (
-            "Playful status lines",
+        Gtk.Switch playful_sw;
+        var playful_row = switch_row (
+            "Playful Status Lines",
             "\u201cDoing the cookies…\u201d while awaiting the first reply.",
             config.playful_status,
-            (state) => {
-                config.playful_status = state;
-                config.save ();
-            }
-        ));
-        var chat_card = card ();
-        chat_card.append (chat_list);
+            out playful_sw
+        );
+        playful_sw.notify["active"].connect (() => {
+            config.playful_status = playful_sw.active;
+            config.save ();
+        });
 
-        var composer_list = card_list ();
-        composer_list.append (switch_row (
-            "Send with Ctrl+Enter",
+        Gtk.Switch ctrl_enter_sw;
+        var ctrl_enter_row = switch_row (
+            "Send With Ctrl+Enter",
             "Enter makes a new line; Ctrl+Enter sends the message.",
             config.send_with_ctrl_enter,
-            (state) => {
-                config.send_with_ctrl_enter = state;
-                config.save ();
-            }
-        ));
-        var composer_card = card ();
-        composer_card.append (composer_list);
+            out ctrl_enter_sw
+        );
+        ctrl_enter_sw.notify["active"].connect (() => {
+            config.send_with_ctrl_enter = ctrl_enter_sw.active;
+            config.save ();
+        });
 
-        var sessions_list = card_list ();
-        sessions_list.append (switch_row (
-            "Confirm before deleting",
+        Gtk.Switch confirm_sw;
+        var confirm_row = switch_row (
+            "Confirm Before Deleting",
             "Ask before a session is permanently removed.",
             config.confirm_delete,
-            (state) => {
-                config.confirm_delete = state;
-                config.save ();
-            }
-        ));
-        var sessions_card = card ();
-        sessions_card.append (sessions_list);
+            out confirm_sw
+        );
+        confirm_sw.notify["active"].connect (() => {
+            config.confirm_delete = confirm_sw.active;
+            config.save ();
+        });
 
         sync_notify_subs ();
 
         return page_wrap (
             page_header ("Behavior", "Notifications and little delights."),
             {
-                section_label ("Notifications"), notify_card,
-                section_label ("Chat"), chat_card,
-                section_label ("Composer"), composer_card,
-                section_label ("Sessions"), sessions_card
+                section_label ("Notifications"),
+                notify_master, turns_row, perms_row, questions_row,
+                section_label ("Chat"), playful_row,
+                section_label ("Composer"), ctrl_enter_row,
+                section_label ("Sessions"), confirm_row
             }
         );
-    }
-
-    private Granite.SwitchModelButton notify_switch (Gtk.ListBox list, string title, string subtitle,
-        bool initial, SwitchFlip on_flip) {
-        var row = switch_row (title, subtitle, initial, on_flip);
-        list.append (row);
-        return row;
     }
 
     private void sync_notify_subs () {
@@ -654,7 +912,7 @@ public class SettingsView : Gtk.Box {
             tooltip_text = "Show in Files",
             valign = Gtk.Align.CENTER
         };
-        reveal_button.add_css_class ("flat");
+        reveal_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         reveal_button.clicked.connect (() => reveal_workspace.begin ());
 
         var save_button = new Gtk.Button.with_label ("Save workspace");
@@ -665,207 +923,126 @@ public class SettingsView : Gtk.Box {
             store.notice ("Workspace saved");
         });
 
-        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
-            margin_top = 12,
-            margin_bottom = 12,
-            margin_start = 12,
-            margin_end = 12
+        var folder_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
+            margin_top = 6,
+            margin_bottom = 6
         };
-        row.append (workspace_entry);
-        row.append (choose_button);
-        row.append (reveal_button);
-        row.append (save_button);
-        var folder_card = card ();
-        folder_card.append (row);
+        folder_row.append (workspace_entry);
+        folder_row.append (choose_button);
+        folder_row.append (reveal_button);
+        folder_row.append (save_button);
 
         return page_wrap (
             page_header ("Workspace", "Default folder suggested for new sessions and worktrees."),
-            { section_label ("Default codebase folder"), folder_card }
+            { setting_row (
+                "Default Codebase Folder",
+                "New sessions and worktrees start here.",
+                folder_row
+            ) }
         );
     }
 
     /* -- Server lists -------------------------------------------------- */
 
     private Gtk.Widget build_providers_page () {
-        var actions = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-        var open_config = new Gtk.Button.with_label ("Config file");
-        open_config.add_css_class ("flat");
-        open_config.tooltip_text = "Open opencode.jsonc in your editor";
+        var open_config = new Gtk.Button.with_label ("Config File") {
+            tooltip_text = "Open opencode.jsonc in your editor"
+        };
         open_config.clicked.connect (() => open_server_config ());
-        var refresh = refresh_action ();
+        var refresh = new Gtk.Button.with_label ("Refresh");
         refresh.clicked.connect (() => load_providers.begin ());
+        var actions = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            halign = Gtk.Align.START,
+            margin_top = 12,
+            margin_bottom = 6
+        };
         actions.append (open_config);
         actions.append (refresh);
 
-        providers_desc_label = new Gtk.Label ("") {
-            xalign = 0,
-            wrap = true
-        };
-        providers_desc_label.add_css_class ("dim-label");
+        providers_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
 
-        var header_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-            margin_top = 24,
-            margin_start = 24,
-            margin_end = 24,
-            margin_bottom = 12
-        };
-        var header = new Granite.HeaderLabel ("Providers") {
-            size = Granite.HeaderLabel.Size.H2,
-            secondary_text = "Backends installed on this server.",
-            hexpand = true
-        };
-        header_box.append (header);
-        actions.valign = Gtk.Align.CENTER;
-        header_box.append (actions);
-
-        var desc_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0) {
-            margin_start = 24,
-            margin_end = 24,
-            margin_bottom = 6
-        };
-        desc_box.append (providers_desc_label);
-
-        providers_page = new StatusList (
-            "No providers",
-            "The server reports no backends.",
-            "applications-science"
+        return page_wrap (
+            page_header ("Providers", "Backends installed on this server."),
+            { providers_box, actions }
         );
-        var list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
-            hexpand = true,
-            vexpand = true,
-            margin_start = 24,
-            margin_end = 24,
-            margin_bottom = 12
-        };
-        list_box.append (providers_page.stack);
-
-        var page = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
-            hexpand = true,
-            vexpand = true
-        };
-        page.append (header_box);
-        page.append (desc_box);
-        page.append (list_box);
-        return page;
     }
 
     private Gtk.Widget build_credentials_page () {
-        var refresh = refresh_action ();
+        var refresh = new Gtk.Button.with_label ("Refresh");
         refresh.clicked.connect (() => load_credentials.begin ());
-        credentials_page = new StatusList (
-            "No credentials",
-            "Accounts that let providers run models appear here.",
-            "dialog-password"
-        );
-        return server_list_page (
-            "Credentials",
-            "Accounts that let providers run models.",
-            refresh,
-            credentials_page
+        var actions = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            halign = Gtk.Align.START,
+            margin_top = 12,
+            margin_bottom = 6
+        };
+        actions.append (refresh);
+
+        credentials_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+
+        return page_wrap (
+            page_header ("Credentials", "Accounts that let providers run models."),
+            { credentials_box, actions }
         );
     }
 
     private Gtk.Widget build_mcp_page () {
-        var refresh = refresh_action ();
+        var refresh = new Gtk.Button.with_label ("Refresh");
         refresh.clicked.connect (() => load_mcp.begin ());
-        mcp_page = new StatusList (
-            "No MCP servers",
-            "External tools connected through the Model Context Protocol.",
-            "application-x-addon"
-        );
-        return server_list_page (
-            "MCP servers",
-            "External tools connected through the Model Context Protocol.",
-            refresh,
-            mcp_page
+        var actions = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            halign = Gtk.Align.START,
+            margin_top = 12,
+            margin_bottom = 6
+        };
+        actions.append (refresh);
+
+        mcp_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+
+        return page_wrap (
+            page_header ("MCP Servers", "External tools connected through the Model Context Protocol."),
+            { mcp_box, actions }
         );
     }
 
     private Gtk.Widget build_worktree_page () {
-        var create = new Gtk.Button.with_label ("New worktree");
-        create.add_css_class ("suggested-action");
+        var create = new Gtk.Button.with_label ("New Worktree");
         create.clicked.connect (() => create_worktree.begin ());
-        worktrees_page = new StatusList (
-            "No worktrees",
-            "Git worktrees of the current project.",
-            "folder-open"
+        var actions = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            halign = Gtk.Align.START,
+            margin_top = 12,
+            margin_bottom = 6
+        };
+        actions.append (create);
+
+        worktrees_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+
+        return page_wrap (
+            page_header ("Worktrees", "Git worktrees of the current project."),
+            { worktrees_box, actions }
         );
-        return server_list_page (
-            "Worktrees",
-            "Git worktrees of the current project.",
-            create,
-            worktrees_page
-        );
-    }
-
-    private Gtk.Widget server_list_page (string title, string description,
-        Gtk.Widget action, StatusList status) {
-        var header_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-            margin_top = 24,
-            margin_start = 24,
-            margin_end = 24,
-            margin_bottom = 12
-        };
-        var header = new Granite.HeaderLabel (title) {
-            size = Granite.HeaderLabel.Size.H2,
-            secondary_text = description,
-            hexpand = true
-        };
-        header_box.append (header);
-        action.valign = Gtk.Align.CENTER;
-        header_box.append (action);
-
-        var list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
-            hexpand = true,
-            vexpand = true,
-            margin_start = 24,
-            margin_end = 24,
-            margin_bottom = 12
-        };
-        list_box.append (status.stack);
-
-        var page = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
-            hexpand = true,
-            vexpand = true
-        };
-        page.append (header_box);
-        page.append (list_box);
-        return page;
     }
 
     /* -- helpers ------------------------------------------------------- */
 
-    private static Gtk.Label row_title (string text) {
-        var title = new Gtk.Label (text) { xalign = 0 };
-        title.add_css_class (Granite.STYLE_CLASS_H4_LABEL);
-        return title;
-    }
-
-    private static Gtk.Label row_subtitle (string text) {
-        var subtitle = new Gtk.Label (text) {
-            xalign = 0,
-            ellipsize = Pango.EllipsizeMode.END
-        };
-        subtitle.add_css_class ("dim-label");
-        subtitle.add_css_class ("caption");
-        return subtitle;
-    }
-
-    private static void clear_list (Gtk.ListBox list) {
-        Gtk.Widget? child = list.get_first_child ();
+    private static void clear_box (Gtk.Box box) {
+        Gtk.Widget? child = box.get_first_child ();
         while (child != null) {
             var next = child.get_next_sibling ();
-            list.remove (child);
+            box.remove (child);
             child = next;
         }
     }
 
-    private static Gtk.Button refresh_action (string tooltip = "Refresh") {
-        var refresh = new Gtk.Button.from_icon_name ("view-refresh") {
-            tooltip_text = tooltip
+    /** Dim centered line for an empty flat page (no rows to show) or a
+     *  load failure. */
+    private static Gtk.Widget flat_note (string text) {
+        var label = new Gtk.Label (text) {
+            xalign = 0.5f,
+            wrap = true,
+            margin_top = 18,
+            margin_bottom = 18
         };
-        refresh.add_css_class ("flat");
-        return refresh;
+        label.add_css_class (Granite.CssClass.DIM);
+        return label;
     }
 
     /* -- loading ------------------------------------------------------- */
@@ -873,10 +1050,14 @@ public class SettingsView : Gtk.Box {
     private async void load_all () {
         client = store.client;
         if (client == null) {
-            providers_page.show_error ("Not connected");
-            credentials_page.show_error ("Not connected");
-            mcp_page.show_error ("Not connected");
-            worktrees_page.show_error ("Not connected");
+            clear_box (providers_box);
+            providers_box.append (flat_note ("Not connected."));
+            clear_box (credentials_box);
+            credentials_box.append (flat_note ("Not connected."));
+            clear_box (mcp_box);
+            mcp_box.append (flat_note ("Not connected."));
+            clear_box (worktrees_box);
+            worktrees_box.append (flat_note ("Not connected."));
             return;
         }
         load_providers.begin ();
@@ -944,25 +1125,24 @@ public class SettingsView : Gtk.Box {
                 path += "?directory=" + Uri.escape_string (dir);
             }
             /* The header subtitle already covers the unscoped case. */
-            providers_desc_label.visible = dir != "";
-            providers_desc_label.label = dir != ""
-                ? @"Backends available in $dir."
-                : "";
             var root = yield client.request ("GET", path);
-            clear_list (providers_page.list);
+            clear_box (providers_box);
             var count = 0;
             foreach (var obj in JsonUtil.root_objects (root)) {
-                providers_page.list.append (provider_row (obj));
+                providers_box.append (provider_row (obj));
                 count++;
             }
-            providers_page.show_list (count > 0);
+            if (count == 0) {
+                providers_box.append (flat_note ("The server reports no backends."));
+            }
         } catch (Error e) {
-            providers_page.show_error (@"Could not load providers: $(e.message)");
+            clear_box (providers_box);
+            providers_box.append (flat_note (@"Could not load providers: $(e.message)"));
         }
     }
 
-    /** Full provider detail: brand icon, name, endpoint and the
-     *  models it serves (cross-referenced with the model catalog). */
+    /** One provider as a flat Settings row: brand icon, name plus
+     *  served models, activation as the trailing status. */
     private Gtk.Widget provider_row (Json.Object obj) {
         var id = JsonUtil.string_member (obj, "id") ?? "";
         var name = JsonUtil.string_member (obj, "name") ?? id;
@@ -971,48 +1151,35 @@ public class SettingsView : Gtk.Box {
         var endpoint = settings != null ? (JsonUtil.string_member (settings, "baseURL") ?? "") : "";
 
         var brand = new Gtk.Image.from_icon_name (ModelIcons.icon_for (id, "")) {
-            pixel_size = 28,
+            pixel_size = 24
+        };
+
+        var models_line = provider_models_line (id);
+        var label = new Granite.HeaderLabel (name) {
+            secondary_text = models_line != "" ? models_line : endpoint,
+            hexpand = true
+        };
+
+        var status = new Gtk.Label (activation == "active" ? "Active" : activation) {
             valign = Gtk.Align.CENTER
         };
-
-        var texts = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) { hexpand = true };
-        texts.append (row_title (name));
-        if (endpoint != "") {
-            var url = new Gtk.Label (endpoint) {
-                xalign = 0,
-                ellipsize = Pango.EllipsizeMode.MIDDLE
-            };
-            url.add_css_class ("dim-label");
-            url.add_css_class ("caption");
-            url.add_css_class ("monospace");
-            texts.append (url);
-        }
-        var models_line = provider_models_line (id);
-        if (models_line != "") {
-            texts.append (row_subtitle (models_line));
+        status.add_css_class ("caption");
+        if (activation == "active") {
+            status.add_css_class (Granite.CssClass.SUCCESS);
+        } else {
+            status.add_css_class (Granite.CssClass.DIM);
         }
 
-        var row_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-            margin_top = 8,
-            margin_bottom = 8,
-            margin_start = 12,
-            margin_end = 12
+        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
+            margin_top = 6,
+            margin_bottom = 6
         };
-        row_box.append (brand);
-        row_box.append (texts);
+        row.append (brand);
+        row.append (label);
         if (activation != "") {
-            var badge = new Gtk.Label (activation) {
-                valign = Gtk.Align.CENTER
-            };
-            badge.add_css_class ("caption");
-            if (activation == "active") {
-                badge.add_css_class (Granite.CssClass.SUCCESS);
-            } else {
-                badge.add_css_class ("dim-label");
-            }
-            row_box.append (badge);
+            row.append (status);
         }
-        return new Granite.ListItem () { child = row_box };
+        return row;
     }
 
     private string provider_models_line (string provider_id) {
@@ -1032,11 +1199,37 @@ public class SettingsView : Gtk.Box {
         if (names.size == 0) {
             return "";
         }
-        var line = string.joinv (", ", names.to_array ());
+        var line = ListArrays.join (", ", names);
         if (max_ctx > 0) {
             line += @" · up to $(Store.format_tokens (max_ctx)) ctx";
         }
         return line;
+    }
+
+    /** One credential as a flat Settings row: account label plus id,
+     *  with Activate (or the Active marker) and delete at the end. */
+    private Gtk.Widget credential_row (string id, string label, string integration, bool active) {
+        var controls = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            valign = Gtk.Align.CENTER
+        };
+        if (active) {
+            var badge = new Gtk.Label ("Active");
+            badge.add_css_class ("caption");
+            badge.add_css_class (Granite.CssClass.SUCCESS);
+            controls.append (badge);
+        } else {
+            var activate = new Gtk.Button.with_label ("Activate");
+            activate.clicked.connect (() => activate_credential.begin (id));
+            controls.append (activate);
+        }
+        var remove = new Gtk.Button.from_icon_name ("user-trash") {
+            tooltip_text = "Delete credential"
+        };
+        remove.add_css_class (Granite.STYLE_CLASS_FLAT);
+        remove.clicked.connect (() => delete_credential.begin (id));
+        controls.append (remove);
+
+        return setting_row (label, integration != "" ? @"$id · $integration" : id, controls);
     }
 
     private async void load_credentials () {
@@ -1045,57 +1238,23 @@ public class SettingsView : Gtk.Box {
         }
         try {
             var root = yield client.request ("GET", "/api/credential");
-            clear_list (credentials_page.list);
+            clear_box (credentials_box);
             var count = 0;
             foreach (var obj in JsonUtil.root_objects (root)) {
                 var id = JsonUtil.string_member (obj, "id") ?? "";
                 var label = JsonUtil.string_member (obj, "label") ?? id;
                 var integration = JsonUtil.string_member (obj, "integrationID") ?? "";
                 var active = obj.get_boolean_member_with_default ("active", false);
-
-                var row_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-                    margin_top = 8,
-                    margin_bottom = 8,
-                    margin_start = 12,
-                    margin_end = 12
-                };
-                var texts = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) { hexpand = true };
-                texts.append (row_title (label));
-                texts.append (row_subtitle (@"$id · $integration"));
-
-                if (active) {
-                    var badge = new Gtk.Label ("Active") {
-                        valign = Gtk.Align.CENTER
-                    };
-                    badge.add_css_class ("caption");
-                    badge.add_css_class (Granite.CssClass.SUCCESS);
-                    row_box.append (texts);
-                    row_box.append (badge);
-                } else {
-                    var activate = new Gtk.Button.with_label ("Activate");
-                    activate.add_css_class ("flat");
-                    activate.valign = Gtk.Align.CENTER;
-                    var captured_id = id;
-                    activate.clicked.connect (() => activate_credential.begin (captured_id));
-                    row_box.append (texts);
-                    row_box.append (activate);
-                }
-
-                var remove = new Gtk.Button.from_icon_name ("user-trash") {
-                    tooltip_text = "Delete credential",
-                    valign = Gtk.Align.CENTER
-                };
-                remove.add_css_class ("destructive-action");
-                var delete_id = id;
-                remove.clicked.connect (() => delete_credential.begin (delete_id));
-                row_box.append (remove);
-
-                credentials_page.list.append (new Granite.ListItem () { child = row_box });
+                credentials_box.append (credential_row (id, label, integration, active));
                 count++;
             }
-            credentials_page.show_list (count > 0);
+            if (count == 0) {
+                credentials_box.append (
+                    flat_note ("Accounts that let providers run models appear here."));
+            }
         } catch (Error e) {
-            credentials_page.show_error (@"Could not load credentials: $(e.message)");
+            clear_box (credentials_box);
+            credentials_box.append (flat_note (@"Could not load credentials: $(e.message)"));
         }
     }
 
@@ -1125,67 +1284,37 @@ public class SettingsView : Gtk.Box {
         }
     }
 
+    /** One MCP server as a flat Settings row: name plus connection
+     *  status, with Connect/Disconnect at the end. */
+    private Gtk.Widget mcp_row (string name, string status, bool connected) {
+        var toggle = new Gtk.Button.with_label (connected ? "Disconnect" : "Connect");
+        toggle.clicked.connect (() => toggle_mcp.begin (name, connected));
+        return setting_row (name, status, toggle);
+    }
+
     private async void load_mcp () {
         if (client == null) {
             return;
         }
         try {
             var root = yield client.request ("GET", "/api/mcp");
-            clear_list (mcp_page.list);
+            clear_box (mcp_box);
             var count = 0;
             foreach (var obj in JsonUtil.root_objects (root)) {
                 var name = JsonUtil.string_member (obj, "name") ?? "server";
                 var status_obj = JsonUtil.object_member (obj, "status");
                 var status = status_obj != null
                     ? (JsonUtil.string_member (status_obj, "status") ?? "unknown") : "unknown";
-
-                var dot = new Gtk.Image.from_icon_name (
-                    status == "connected" ? "emblem-default-symbolic" : "window-close"
-                ) {
-                    pixel_size = 16,
-                    valign = Gtk.Align.CENTER
-                };
-                if (status == "connected") {
-                    dot.add_css_class (Granite.CssClass.SUCCESS);
-                } else {
-                    dot.add_css_class ("dim-label");
-                }
-
-                var row_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-                    margin_top = 8,
-                    margin_bottom = 8,
-                    margin_start = 12,
-                    margin_end = 12
-                };
-                var texts = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) { hexpand = true };
-                texts.append (row_title (name));
-                var status_label = new Gtk.Label (status) {
-                    xalign = 0
-                };
-                status_label.add_css_class ("caption");
-                if (status == "connected") {
-                    status_label.add_css_class (Granite.CssClass.SUCCESS);
-                } else {
-                    status_label.add_css_class ("dim-label");
-                }
-                texts.append (status_label);
-                row_box.append (dot);
-                row_box.append (texts);
-
-                var toggle = new Gtk.Button.with_label (status == "connected" ? "Disconnect" : "Connect");
-                toggle.add_css_class ("flat");
-                toggle.valign = Gtk.Align.CENTER;
-                var captured = name;
-                var connected = status == "connected";
-                toggle.clicked.connect (() => toggle_mcp.begin (captured, connected));
-                row_box.append (toggle);
-
-                mcp_page.list.append (new Granite.ListItem () { child = row_box });
+                mcp_box.append (mcp_row (name, status, status == "connected"));
                 count++;
             }
-            mcp_page.show_list (count > 0);
+            if (count == 0) {
+                mcp_box.append (
+                    flat_note ("External tools connected through the Model Context Protocol appear here."));
+            }
         } catch (Error e) {
-            mcp_page.show_error (@"Could not load MCP servers: $(e.message)");
+            clear_box (mcp_box);
+            mcp_box.append (flat_note (@"Could not load MCP servers: $(e.message)"));
         }
     }
 
@@ -1204,6 +1333,21 @@ public class SettingsView : Gtk.Box {
         }
     }
 
+    /** One worktree as a flat Settings row: folder name plus location,
+     *  with remove at the end. */
+    private Gtk.Widget worktree_row (string directory, string strategy) {
+        var remove = new Gtk.Button.from_icon_name ("user-trash") {
+            tooltip_text = "Remove worktree"
+        };
+        remove.add_css_class (Granite.STYLE_CLASS_FLAT);
+        remove.clicked.connect (() => remove_worktree.begin (directory));
+        return setting_row (
+            GLib.Path.get_basename (directory),
+            strategy != "" ? @"$directory · $strategy" : directory,
+            remove
+        );
+    }
+
     private async void load_worktrees () {
         if (client == null) {
             return;
@@ -1218,9 +1362,9 @@ public class SettingsView : Gtk.Box {
                     }
                 }
             }
-            clear_list (worktrees_page.list);
+            clear_box (worktrees_box);
             if (project_id == "") {
-                worktrees_page.show_error ("No project available");
+                worktrees_box.append (flat_note ("No project available."));
                 return;
             }
             var root = yield client.request ("GET", "/api/worktree?projectID=" + Uri.escape_string (project_id));
@@ -1228,32 +1372,15 @@ public class SettingsView : Gtk.Box {
             foreach (var obj in JsonUtil.root_objects (root)) {
                 var directory = JsonUtil.string_member (obj, "directory") ?? "";
                 var strategy = JsonUtil.string_member (obj, "strategy") ?? "";
-                var row_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 12) {
-                    margin_top = 8,
-                    margin_bottom = 8,
-                    margin_start = 12,
-                    margin_end = 12
-                };
-                var texts = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) { hexpand = true };
-                texts.append (row_title (GLib.Path.get_basename (directory)));
-                texts.append (row_subtitle (strategy != "" ? @"$directory · $strategy" : directory));
-                row_box.append (texts);
-
-                var remove = new Gtk.Button.from_icon_name ("user-trash") {
-                    tooltip_text = "Remove worktree",
-                    valign = Gtk.Align.CENTER
-                };
-                remove.add_css_class ("destructive-action");
-                var captured = directory;
-                remove.clicked.connect (() => remove_worktree.begin (captured));
-                row_box.append (remove);
-
-                worktrees_page.list.append (new Granite.ListItem () { child = row_box });
+                worktrees_box.append (worktree_row (directory, strategy));
                 count++;
             }
-            worktrees_page.show_list (count > 0);
+            if (count == 0) {
+                worktrees_box.append (flat_note ("Git worktrees of the current project appear here."));
+            }
         } catch (Error e) {
-            worktrees_page.show_error (@"Could not load worktrees: $(e.message)");
+            clear_box (worktrees_box);
+            worktrees_box.append (flat_note (@"Could not load worktrees: $(e.message)"));
         }
     }
 
@@ -1296,72 +1423,6 @@ public class SettingsView : Gtk.Box {
         } catch (Error e) {
             store.notice (@"Remove worktree failed: $(e.message)");
         }
-    }
-}
-
-/** A server-backed list with a proper elementary empty state: the
- *  list when it has rows, a Granite.Placeholder when it has none,
- *  and an inline dim error row when a load fails. */
-private class StatusList : GLib.Object {
-    public Gtk.Stack stack { get; private set; }
-    public Gtk.ListBox list { get; private set; }
-    private Granite.Placeholder empty;
-
-    public StatusList (string title, string description, string icon_name) {
-        list = new Gtk.ListBox () {
-            selection_mode = Gtk.SelectionMode.NONE,
-            show_separators = true
-        };
-        list.add_css_class ("rich-list");
-        list.add_css_class ("settings-list");
-
-        var scroll = new Gtk.ScrolledWindow () {
-            vexpand = true,
-            hexpand = true,
-            hscrollbar_policy = Gtk.PolicyType.NEVER,
-            child = list
-        };
-        scroll.add_css_class ("settings-scroll");
-
-        empty = new Granite.Placeholder (title) {
-            description = description
-        };
-        empty.icon = new ThemedIcon (icon_name);
-
-        stack = new Gtk.Stack () {
-            hexpand = true,
-            vexpand = true
-        };
-        stack.add_named (scroll, "list");
-        stack.add_named (empty, "empty");
-        stack.visible_child_name = "empty";
-    }
-
-    public void show_list (bool has_items) {
-        stack.visible_child_name = has_items ? "list" : "empty";
-    }
-
-    public void show_error (string text) {
-        var label = new Gtk.Label (text) {
-            xalign = 0.5f,
-            margin_top = 24,
-            margin_bottom = 24,
-            wrap = true
-        };
-        label.add_css_class ("dim-label");
-        var row = new Gtk.ListBoxRow () {
-            child = label,
-            selectable = false,
-            activatable = false
-        };
-        Gtk.Widget? child = list.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            list.remove (child);
-            child = next;
-        }
-        list.append (row);
-        stack.visible_child_name = "list";
     }
 }
 

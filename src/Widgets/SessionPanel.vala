@@ -40,6 +40,13 @@ public class SessionPanel : Gtk.Box {
     private Gtk.Box subagents_box;
     private Gtk.Label subagents_count;
     private Gtk.Label subagents_empty;
+    /** Existing subagent rows keyed by call id, so update() can patch
+     *  the rows that changed instead of rebuilding all of them. */
+    private Gee.HashMap<string, Gtk.Box> subagent_rows;
+    /** Last meter band applied (""/context-high/context-full) and last
+     *  provider icon, to skip redundant style + icon work. */
+    private string last_context_band = "";
+    private string last_usage_icon = "";
 
     /* Context sources */
     private Gtk.Label sources_skills;
@@ -58,11 +65,13 @@ public class SessionPanel : Gtk.Box {
         );
         this.store = store;
         add_css_class ("session-panel");
+        subagent_rows = new Gee.HashMap<string, Gtk.Box> ();
 
         var scrolled = new Gtk.ScrolledWindow () {
             vexpand = true,
             hscrollbar_policy = Gtk.PolicyType.NEVER
-        };        sections = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        };
+        sections = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
         scrolled.child = sections;
         append (scrolled);
 
@@ -73,7 +82,7 @@ public class SessionPanel : Gtk.Box {
             margin_start = 16,
             margin_end = 16
         };
-        empty_label.add_css_class ("dim-label");
+        empty_label.add_css_class (Granite.CssClass.DIM);
         sections.append (empty_label);
 
         build_context ();
@@ -86,6 +95,9 @@ public class SessionPanel : Gtk.Box {
 
     /* -- section scaffolding ------------------------------------------ */
 
+    /** Section head: a native Granite.HeaderLabel (small-caps section
+     *  typography, no hand-rolled bold class) with a dim trailing value
+     *  (percentage, project name, counts). */
     private Gtk.Box section_header (string title, out Gtk.Label value) {
         var box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
             margin_top = 12,
@@ -93,10 +105,12 @@ public class SessionPanel : Gtk.Box {
             margin_start = 12,
             margin_end = 12
         };
-        var label = new Gtk.Label (title) { xalign = 0, hexpand = true };
-        label.add_css_class ("panel-section-title");
-        value = new Gtk.Label ("") { xalign = 1 };
-        value.add_css_class ("dim-label");
+        var label = new Granite.HeaderLabel (title) {
+            hexpand = true,
+            valign = Gtk.Align.CENTER
+        };
+        value = new Gtk.Label ("") { xalign = 1, valign = Gtk.Align.CENTER };
+        value.add_css_class (Granite.CssClass.DIM);
         value.add_css_class ("caption");
         box.append (label);
         box.append (value);
@@ -118,7 +132,7 @@ public class SessionPanel : Gtk.Box {
             margin_bottom = 1
         };
         var key_label = new Gtk.Label (key) { xalign = 0, hexpand = true };
-        key_label.add_css_class ("dim-label");
+        key_label.add_css_class (Granite.CssClass.DIM);
         key_label.add_css_class ("caption");
         value = new Gtk.Label ("—") { xalign = 1 };
         value.add_css_class ("caption");
@@ -158,7 +172,7 @@ public class SessionPanel : Gtk.Box {
             margin_bottom = 4
         };
         project_path_label.add_css_class ("caption");
-        project_path_label.add_css_class ("monospace");
+        project_path_label.add_css_class (Granite.CssClass.MONOSPACE);
         add_section (header, project_path_label);
     }
 
@@ -188,7 +202,7 @@ public class SessionPanel : Gtk.Box {
 
     private void build_turn_stats () {
         Gtk.Label value;
-        var header = section_header ("Turn stats", out value);
+        var header = section_header ("Turn Stats", out value);
         value.label = "";
 
         var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { margin_bottom = 6 };
@@ -196,8 +210,8 @@ public class SessionPanel : Gtk.Box {
         box.append (stat_row ("Tokens", out stat_tokens));
         box.append (stat_row ("Cache", out stat_cache));
         box.append (stat_row ("Elapsed", out stat_elapsed));
-        box.append (stat_row ("Model time", out stat_model_time));
-        box.append (stat_row ("Tool time", out stat_tool_time));
+        box.append (stat_row ("Model Time", out stat_model_time));
+        box.append (stat_row ("Tool Time", out stat_tool_time));
         box.append (stat_row ("Cost", out stat_cost));
         add_section (header, box);
     }
@@ -212,7 +226,7 @@ public class SessionPanel : Gtk.Box {
             margin_end = 12,
             margin_bottom = 6
         };
-        subagents_empty.add_css_class ("dim-label");
+        subagents_empty.add_css_class (Granite.CssClass.DIM);
         subagents_empty.add_css_class ("caption");
         subagents_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 2) {
             margin_start = 12,
@@ -229,12 +243,12 @@ public class SessionPanel : Gtk.Box {
 
     private void build_sources () {
         Gtk.Label value;
-        var header = section_header ("Context sources", out value);
+        var header = section_header ("Context Sources", out value);
         value.label = "";
 
         var box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) { margin_bottom = 12 };
         box.append (stat_row ("Skills", out sources_skills));
-        box.append (stat_row ("MCP servers", out sources_mcp));
+        box.append (stat_row ("MCP Servers", out sources_mcp));
         add_section (header, box);
     }
 
@@ -281,20 +295,29 @@ public class SessionPanel : Gtk.Box {
         }
 
         /* Context */
-        var fraction = store.context_fraction (session.id);
+        double fraction;
+        string ctx_label;
+        store.context_info (session.id, out fraction, out ctx_label);
         if (fraction >= 0.0) {
             context_bar.value = fraction;
-            context_bar.remove_css_class ("context-high");
-            context_bar.remove_css_class ("context-full");
-            if (fraction >= 0.92) {
-                context_bar.add_css_class ("context-full");
-            } else if (fraction >= 0.75) {
-                context_bar.add_css_class ("context-high");
+            /* Only touch the CSS classes when the band actually
+             *  changed: add/remove of an already-correct class
+             *  invalidates the style context. */
+            string band = fraction >= 0.92 ? "context-full"
+                : (fraction >= 0.75 ? "context-high" : "");
+            if (band != last_context_band) {
+                context_bar.remove_css_class ("context-high");
+                context_bar.remove_css_class ("context-full");
+                if (band != "") {
+                    context_bar.add_css_class (band);
+                }
+                last_context_band = band;
             }
             context_label.label = "%.1f%%".printf (fraction * 100.0);
         } else {
             context_bar.value = 0.0;
             context_label.label = "—";
+            last_context_band = "";
         }
 
         /* Project */
@@ -304,7 +327,11 @@ public class SessionPanel : Gtk.Box {
         project_path_label.tooltip_text = dir;
 
         /* Usage */
-        usage_icon.icon_name = ModelIcons.icon_for (session.provider_id, session.model_id);
+        var provider_icon = ModelIcons.icon_for (session.provider_id, session.model_id);
+        if (provider_icon != last_usage_icon) {
+            usage_icon.icon_name = provider_icon;
+            last_usage_icon = provider_icon;
+        }
         usage_model_label.label = session.model != "" ? session.model : "—";
         var tokens_line = new StringBuilder ();
         if (session.input_tokens > 0) {
@@ -319,16 +346,71 @@ public class SessionPanel : Gtk.Box {
 
         /* Subagents */
         var runs = store.subagents_for (session.id);
-        clear_box (subagents_box);
         subagents_count.label = runs.size > 0 ? runs.size.to_string () : "";
         subagents_empty.visible = runs.size == 0;
+        update_subagent_rows (runs);
+
+        /* Context sources */
+        sources_skills.label = store.skills_count > 0
+            ? store.skills_count.to_string () : "—";
+        sources_mcp.label = mcp_count > 0 ? mcp_count.to_string () : "0";
+    }
+
+    /** Diff the subagent list against the rows already on screen: a
+     *  turn fires several events per second and each one used to
+     *  destroy and rebuild every row (plus its icon lookups). */
+    private void update_subagent_rows (Gee.ArrayList<Store.SubagentRun> runs) {
+        var live_ids = new Gee.HashSet<string> ();
         foreach (var run in runs) {
-            var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-            var icon = new Gtk.Image.from_icon_name (
+            live_ids.add (run.call_id);
+        }
+        /* Drop rows whose run is gone. */
+        var gone = new Gee.ArrayList<string> ();
+        foreach (var id in subagent_rows.keys) {
+            if (!live_ids.contains (id)) {
+                gone.add (id);
+            }
+        }
+        foreach (var id in gone) {
+            var row = subagent_rows[id];
+            subagents_box.remove (row);
+            subagent_rows.unset (id);
+        }
+        foreach (var run in runs) {
+            Gtk.Box? row = null;
+            Gtk.Label? label = null;
+            Gtk.Image? icon = null;
+            if (subagent_rows.has_key (run.call_id)) {
+                row = subagent_rows[run.call_id];
+                for (var c = row.get_first_child (); c != null; c = c.get_next_sibling ()) {
+                    if (c is Gtk.Label) {
+                        label = (Gtk.Label) c;
+                    } else if (c is Gtk.Image) {
+                        icon = (Gtk.Image) c;
+                    }
+                }
+                /* Keep the existing widget and only rewrite the fields
+                 *  that actually changed. */
+                var text = run.description != "" ? run.description : "Subagent task";
+                if (label != null && label.label != text) {
+                    label.label = text;
+                    label.tooltip_text = run.description;
+                }
+                if (icon != null) {
+                    var wanted = run.error ? "dialog-warning"
+                        : (run.done ? "process-completed" : "system-run");
+                    if (icon.icon_name != wanted) {
+                        icon.icon_name = wanted;
+                    }
+                }
+                continue;
+            }
+            row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            icon = new Gtk.Image.from_icon_name (
                 run.error ? "dialog-warning"
                 : (run.done ? "process-completed" : "system-run")
             ) { pixel_size = 14, valign = Gtk.Align.CENTER };
-            var label = new Gtk.Label (run.description != "" ? run.description : "Subagent task") {
+            label = new Gtk.Label (run.description != "" ? run.description : "Subagent task") {
                 xalign = 0,
                 hexpand = true,
                 ellipsize = Pango.EllipsizeMode.END
@@ -338,12 +420,8 @@ public class SessionPanel : Gtk.Box {
             row.append (icon);
             row.append (label);
             subagents_box.append (row);
+            subagent_rows[run.call_id] = row;
         }
-
-        /* Context sources */
-        sources_skills.label = store.skills_count > 0
-            ? store.skills_count.to_string () : "—";
-        sources_mcp.label = mcp_count > 0 ? mcp_count.to_string () : "0";
     }
 
     private void compute_turn_stats () {
@@ -425,15 +503,6 @@ public class SessionPanel : Gtk.Box {
                 child.visible = visible;
             }
             child = child.get_next_sibling ();
-        }
-    }
-
-    private static void clear_box (Gtk.Box box) {
-        Gtk.Widget? child = box.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            box.remove (child);
-            child = next;
         }
     }
 }
