@@ -240,6 +240,30 @@ popover > contents {
   border: none;
 }
 
+/* The permission mode and the three pickers share one shape, so the
+ * row under the input reads as a single control strip instead of four
+ * buttons that each look slightly different. */
+.composer-card button.composer-chip,
+.composer-card menubutton > button {
+  padding: 2px 10px;
+  min-height: 0;
+  border-radius: 9999px;
+  background-color: alpha(@borders, 0.18);
+  box-shadow: none;
+}
+
+.composer-card button.composer-chip:hover,
+.composer-card menubutton > button:hover {
+  background-color: alpha(@borders, 0.3);
+}
+
+/* Cost / token readout: quiet, and the first thing to give up width
+ * when the toolbar runs out of room. */
+.composer-status {
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
 /* Attachments */
 .attachment-chip {
   background-color: alpha(@borders, 0.28);
@@ -260,6 +284,12 @@ popover > contents {
 levelbar trough {
   min-height: 6px;
   border-radius: 9999px;
+}
+
+/* The composer's meter is a line under the input, not a bar across the
+ * card, so it stays slim there. */
+.composer-context levelbar trough {
+  min-height: 4px;
 }
 
 /* Context meter ramp. NOTE: driven from code (Composer adds
@@ -366,12 +396,6 @@ levelbar.context-full block.filled {
   font-weight: bold;
 }
 
-
-.diff-chip-button {
-  padding: 1px 10px;
-  border-radius: 9999px;
-  background-color: alpha(@borders, 0.25);
-}
 
 .diff-chip-label {
   font-family: monospace;

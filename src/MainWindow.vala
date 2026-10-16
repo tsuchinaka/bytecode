@@ -1071,15 +1071,19 @@ public class MainWindow : Gtk.ApplicationWindow {
         subtitle_label.label = joined;
         subtitle_label.visible = joined != "";
 
+        /* Cost and token readout for the toolbar: plain units instead of
+         *  a glyph, and cents-precision once the cost is worth showing. */
         var status = new StringBuilder ();
-        if (session.cost > 0) {
+        if (session.cost >= 0.01) {
+            status.append ("$%.2f".printf (session.cost));
+        } else if (session.cost > 0) {
             status.append ("$%.4f".printf (session.cost));
         }
         if (session.input_tokens > 0) {
             if (status.len > 0) {
                 status.append (" · ");
             }
-            status.append (@"◊ $(Store.format_tokens (session.input_tokens)) in");
+            status.append (@"$(Store.format_tokens (session.input_tokens)) in");
             if (session.output_tokens > 0) {
                 status.append (@" / $(Store.format_tokens (session.output_tokens)) out");
             }

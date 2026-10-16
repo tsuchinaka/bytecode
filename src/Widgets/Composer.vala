@@ -202,7 +202,6 @@ public class Composer : Gtk.Box {
             margin_top = 8,
             visible = false
         };
-        diff_button.add_css_class ("diff-chip-button");
         diff_row.append (diff_button);
         diff_editing_label = new Gtk.Label ("") {
             xalign = 0,
@@ -232,12 +231,12 @@ public class Composer : Gtk.Box {
             hscrollbar_policy = Gtk.PolicyType.NEVER,
             vscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
             propagate_natural_height = true,
-            min_content_height = 44,
+            min_content_height = 48,
             max_content_height = 150,
             child = text_view
         };
 
-        placeholder_label = new Gtk.Label ("Send a message (paste or drop images to attach)") {
+        placeholder_label = new Gtk.Label ("Send a message") {
             xalign = 0,
             yalign = 0,
             halign = Gtk.Align.START,
@@ -305,7 +304,8 @@ public class Composer : Gtk.Box {
         drop_target.drop.connect ((value, x, y) => on_files_dropped (value));
         text_view.add_controller (drop_target);
 
-        /* Context meter row */
+        /* Context meter: a slim line under the input, with its reading
+         *  as a quiet caption rather than a heavy bar across the card. */
         context_bar = new Gtk.LevelBar.for_interval (0.0, 1.0) {
             hexpand = true,
             valign = Gtk.Align.CENTER
@@ -319,8 +319,11 @@ public class Composer : Gtk.Box {
         context_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
             margin_start = 12,
             margin_end = 12,
+            margin_top = 4,
+            margin_bottom = 2,
             visible = false
         };
+        context_row.add_css_class ("composer-context");
         context_row.append (context_bar);
         context_row.append (context_label);
 
@@ -334,9 +337,12 @@ public class Composer : Gtk.Box {
         status_label = new Gtk.Label ("") {
             xalign = 0,
             ellipsize = Pango.EllipsizeMode.END,
+            max_width_chars = 42,
             hexpand = true
         };
-        status_label.add_css_class ("message-meta");
+        status_label.add_css_class (Granite.CssClass.DIM);
+        status_label.add_css_class ("caption");
+        status_label.add_css_class ("composer-status");
 
         /* Changed-files chip: sits directly above the input and opens
          *  the list of files the agent has touched (one row per path),
@@ -346,7 +352,6 @@ public class Composer : Gtk.Box {
             tooltip_text = "Files changed in this session"
         };
         diff_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-        diff_button.add_css_class ("diff-chip-button");
 
         var diff_chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
             valign = Gtk.Align.CENTER
@@ -376,7 +381,7 @@ public class Composer : Gtk.Box {
         OpenClient.set_menu_popover (diff_button, diff_popover);
 
         attach_button = new Gtk.Button.from_icon_name ("mail-attachment-symbolic") {
-            tooltip_text = "Attach images",
+            tooltip_text = "Attach images (or paste and drop them here)",
             valign = Gtk.Align.CENTER
         };
         attach_button.add_css_class (Granite.STYLE_CLASS_FLAT);
@@ -402,6 +407,7 @@ public class Composer : Gtk.Box {
             valign = Gtk.Align.CENTER
         };
         permission_mode_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+        permission_mode_button.add_css_class ("composer-chip");
         permission_mode_button.clicked.connect (() => cycle_permission_mode ());
         update_permission_mode_button ();
 
