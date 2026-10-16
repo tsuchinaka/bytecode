@@ -676,7 +676,7 @@ public class Composer : Gtk.Box {
         var listed = new Gee.HashSet<string> ();
         foreach (var diff in files) {
             listed.add (diff.path);
-            diff_list_box.append (diff_file_row (diff.path, diff.additions,
+            diff_list_box.append (new ChangeRow (diff.path, diff.additions,
                 diff.deletions, diff.status, editing.contains (diff.path)));
         }
         /* Files being written that the diff does not know about yet
@@ -685,7 +685,7 @@ public class Composer : Gtk.Box {
             if (listed.contains (path)) {
                 continue;
             }
-            diff_list_box.append (diff_file_row (path, -1, -1, "", true));
+            diff_list_box.append (new ChangeRow (path, -1, -1, "", true));
         }
     }
 
@@ -698,56 +698,6 @@ public class Composer : Gtk.Box {
         };
         label.add_css_class (css_class);
         return label;
-    }
-
-    /** One changed file: status icon, name, +/− counts and a spinner
-     *  while it is being written. Negative counts mean "unknown yet". */
-    private static Gtk.Widget diff_file_row (string path, int additions, int deletions,
-        string status, bool editing) {
-        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
-            margin_top = 4,
-            margin_bottom = 4,
-            margin_start = 8,
-            margin_end = 8
-        };
-        row.tooltip_text = path;
-
-        var icon_name = status == "added" ? "list-add"
-            : (status == "deleted" ? "edit-delete" : "text-x-generic");
-        row.append (new Gtk.Image.from_icon_name (icon_name) {
-            pixel_size = 14,
-            valign = Gtk.Align.CENTER
-        });
-
-        if (editing) {
-            var spinner = new Gtk.Spinner () {
-                spinning = true,
-                valign = Gtk.Align.CENTER,
-                tooltip_text = "Being changed now"
-            };
-            row.append (spinner);
-        }
-
-        var name = GLib.Path.get_basename (path);
-        var name_label = new Gtk.Label (name) {
-            xalign = 0,
-            hexpand = true,
-            ellipsize = Pango.EllipsizeMode.MIDDLE,
-            max_width_chars = 28
-        };
-        row.append (name_label);
-
-        if (additions > 0) {
-            var add_label = new Gtk.Label (@"+$additions");
-            add_label.add_css_class ("diff-add");
-            row.append (add_label);
-        }
-        if (deletions > 0) {
-            var del_label = new Gtk.Label (@"−$deletions");
-            del_label.add_css_class ("diff-del");
-            row.append (del_label);
-        }
-        return row;
     }
 
     private static void clear_box (Gtk.Box box) {

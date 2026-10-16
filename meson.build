@@ -82,6 +82,7 @@ executable(
   'src/Widgets/AttachmentView.vala',
   'src/Widgets/UserBubble.vala',
   'src/Widgets/ChangeCard.vala',
+  'src/Widgets/ChangeRow.vala',
   'src/Widgets/Composer.vala',
   'src/Widgets/DiffPatchView.vala',
   'src/Widgets/FormCard.vala',

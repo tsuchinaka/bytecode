@@ -54,11 +54,8 @@ public class ChangeCard : Gtk.Box {
 
         /* The file being written spins where the icon would be, the
          *  same language the composer chip uses. */
-        spinner = new Gtk.Spinner () {
-            visible = false,
-            valign = Gtk.Align.CENTER,
-            tooltip_text = "Being changed now"
-        };
+        spinner = ChangeRow.editing_spinner ();
+        spinner.visible = false;
         row.append (spinner);
 
         var path_label = new Gtk.Label (path) {
@@ -136,9 +133,7 @@ public class ChangeCard : Gtk.Box {
      *  its latest patch text around until someone looks. */
     public void set_change (int additions, int deletions, string status,
         string patch, bool editing) {
-        var name = status == "added" ? "list-add"
-            : (status == "deleted" ? "edit-delete" : "text-x-generic");
-        icon.icon_name = name;
+        icon.icon_name = ChangeRow.icon_for_status (status);
         icon.visible = !editing;
         spinner.visible = editing;
         spinner.spinning = editing;
