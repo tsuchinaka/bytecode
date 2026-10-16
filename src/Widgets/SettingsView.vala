@@ -507,7 +507,7 @@ public class SettingsView : Gtk.Box {
         Gtk.Switch managed_sw;
         var managed_row = switch_row (
             "Managed Server",
-            "Bytecode starts its own `opencode serve` on a private port with its own passcode.",
+            "bytecode starts its own `opencode serve` on a private port with its own passcode.",
             config.manage_server,
             out managed_sw
         );
@@ -612,7 +612,7 @@ public class SettingsView : Gtk.Box {
         manual_section.append (save_button);
 
         return page_wrap (
-            page_header ("Connection", "Bytecode runs its own OpenCode server, or talk to one you run yourself."),
+            page_header ("Connection", "bytecode runs its own OpenCode server, or talks to one you run yourself."),
             { status_row, service_watch_label, managed_row, managed_section, manual_section }
         );
     }

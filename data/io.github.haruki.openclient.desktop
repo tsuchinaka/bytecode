@@ -1,10 +1,10 @@
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=OpenCode Client
+Name=bytecode
 GenericName=AI Coding Agent
-Comment=A native client for OpenCode
-Comment[es]=Cliente nativo para OpenCode
+Comment=An OpenCode client
+Comment[es]=Un cliente de OpenCode
 Exec=io.github.haruki.openclient
 Icon=io.github.haruki.openclient
 DBusActivatable=false
@@ -12,7 +12,7 @@ StartupNotify=true
 StartupWMClass=io.github.haruki.openclient
 Terminal=false
 Categories=Development;IDE;
-Keywords=AI;agent;chat;opencode;code;LLM;
+Keywords=AI;agent;bytecode;chat;code;LLM;opencode;
 Keywords[es]=IA;agente;chat;codigo;
 X-GNOME-UsesNotifications=true
 Actions=NewSession;

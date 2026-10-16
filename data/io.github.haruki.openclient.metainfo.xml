@@ -2,14 +2,21 @@
 <component type="desktop-application">
   <id>io.github.haruki.openclient</id>
 
-  <name>OpenCode Client</name>
-  <summary>A native client for OpenCode</summary>
+  <name>bytecode</name>
+  <summary>An OpenCode client</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
+  <developer id="io.github.tsuchinaka">
+    <name>tsuchinaka</name>
+  </developer>
+
+  <url type="homepage">https://github.com/tsuchinaka/bytecode</url>
+  <url type="bugtracker">https://github.com/tsuchinaka/bytecode/issues</url>
+
   <description>
-    <p>A fast, native GTK4 client for the OpenCode AI coding agent server.</p>
+    <p>bytecode is a fast, native GTK4 client for the OpenCode AI coding agent server. It talks straight to the server's own API, so there is no bundled browser engine and no Node.js runtime.</p>
     <p>Features:</p>
     <ul>
       <li>Browse and manage sessions</li>

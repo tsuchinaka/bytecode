@@ -42,7 +42,7 @@ public class MainWindow : Gtk.ApplicationWindow {
     public MainWindow (Application app) {
         Object (
             application: app,
-            title: "OpenCode",
+            title: "bytecode",
             default_width: 1100,
             default_height: 760
         );
@@ -187,7 +187,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         var title_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
             valign = Gtk.Align.CENTER
         };
-        title_label = new Gtk.Label ("OpenCode") {
+        title_label = new Gtk.Label ("bytecode") {
             ellipsize = Pango.EllipsizeMode.END
         };
         title_label.add_css_class ("heading");
@@ -1038,7 +1038,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         }
         var session = app.store.active_session;
         if (session == null) {
-            title_label.label = "OpenCode";
+            title_label.label = "bytecode";
             subtitle_label.label = "";
             subtitle_label.visible = false;
             composer.set_status_text ("");
@@ -1396,9 +1396,9 @@ public class MainWindow : Gtk.ApplicationWindow {
     private void show_about () {
         Gtk.show_about_dialog (
             this,
-            "program-name", "OpenCode Client",
+            "program-name", "bytecode",
             "version", "0.2.0",
-            "comments", "A native OpenCode client for elementary OS",
+            "comments", "bytecode, an OpenCode client for elementary OS",
             "license-type", Gtk.License.GPL_3_0,
             null
         );
