@@ -3,7 +3,8 @@
  *
  * Agent question card, docked above the composer. Renders the typed
  * fields of an OpenCode form (string, number, integer, boolean,
- * multiselect, external) with their constraints, honours conditional
+ * multiselect, external) as a one-question-per-page wizard with Back /
+ * Continue navigation and a final review page, honours conditional
  * `when` guards and hidden fields, validates before submitting, and
  * offers a Cancel that settles the form server-side.
  */
@@ -16,10 +17,19 @@ public class FormCard : Gtk.Box {
 
     private FormInfo? form = null;
     private Gtk.Label title_label;
-    private Gtk.Box fields_box;
+    private Gtk.Label page_label;
+    private Gtk.Stack pages;
+    private Gtk.Box review_box;
     private Gtk.Label error_label;
-    private Gtk.Button submit_button;
+    private Gtk.Button back_button;
+    private Gtk.Button next_button;
     private Gtk.Button cancel_button;
+
+    /** Visible field keys in order; rebuilt whenever answers change
+     *  (`when` guards can show or hide later questions). */
+    private Gee.ArrayList<string> page_keys;
+    /** Index into page_keys, or page_keys.size for the review page. */
+    private int page_index = 0;
 
     private Gee.HashMap<string, Gtk.Widget> inputs;
     private Gee.HashMap<string, Gee.ArrayList<Gtk.CheckButton>> multi_checks;
@@ -34,12 +44,13 @@ public class FormCard : Gtk.Box {
         margin_start = 12;
         margin_end = 12;
         margin_top = 6;
-        add_css_class ("card");
+        add_css_class (Granite.CssClass.CARD);
         add_css_class ("form-card");
 
         inputs = new Gee.HashMap<string, Gtk.Widget> ();
         multi_checks = new Gee.HashMap<string, Gee.ArrayList<Gtk.CheckButton>> ();
         field_rows = new Gee.HashMap<string, Gtk.Box> ();
+        page_keys = new Gee.ArrayList<string> ();
 
         var header = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
         var icon = new Gtk.Image.from_icon_name ("dialog-question") {
@@ -53,12 +64,24 @@ public class FormCard : Gtk.Box {
             hexpand = true
         };
         title_label.add_css_class ("heading");
+        page_label = new Gtk.Label ("") {
+            xalign = 1,
+            valign = Gtk.Align.CENTER
+        };
+        page_label.add_css_class (Granite.CssClass.DIM);
+        page_label.add_css_class ("caption");
         header.append (icon);
         header.append (title_label);
+        header.append (page_label);
         append (header);
 
-        fields_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 12);
-        append (fields_box);
+        pages = new Gtk.Stack () {
+            transition_type = Gtk.StackTransitionType.SLIDE_LEFT_RIGHT
+        };
+        append (pages);
+
+        review_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 12);
+        pages.add_named (review_box, "review");
 
         error_label = new Gtk.Label ("") {
             xalign = 0,
@@ -73,17 +96,20 @@ public class FormCard : Gtk.Box {
             margin_top = 2
         };
         cancel_button = new Gtk.Button.with_label ("Cancel");
-        cancel_button.add_css_class ("flat");
+        cancel_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         cancel_button.clicked.connect (() => {
             if (form != null) {
                 cancelled (form.id);
             }
         });
-        submit_button = new Gtk.Button.with_label ("Submit");
-        submit_button.add_css_class ("suggested-action");
-        submit_button.clicked.connect (() => submit ());
+        back_button = new Gtk.Button.with_label ("Back");
+        back_button.clicked.connect (() => go_back ());
+        next_button = new Gtk.Button.with_label ("Continue");
+        next_button.add_css_class ("suggested-action");
+        next_button.clicked.connect (() => go_next ());
         actions.append (cancel_button);
-        actions.append (submit_button);
+        actions.append (back_button);
+        actions.append (next_button);
         append (actions);
     }
 
@@ -91,15 +117,25 @@ public class FormCard : Gtk.Box {
         this.form = form;
         error_label.visible = false;
 
-        Gtk.Widget? child = fields_box.get_first_child ();
+        Gtk.Widget? child = pages.get_first_child ();
         while (child != null) {
             var next = child.get_next_sibling ();
-            fields_box.remove (child);
+            if (child != review_box) {
+                pages.remove (child);
+            }
             child = next;
+        }
+        Gtk.Widget? review_child = review_box.get_first_child ();
+        while (review_child != null) {
+            var next = review_child.get_next_sibling ();
+            review_box.remove (review_child);
+            review_child = next;
         }
         inputs.clear ();
         multi_checks.clear ();
         field_rows.clear ();
+        page_keys.clear ();
+        page_index = 0;
 
         if (form == null) {
             return;
@@ -112,9 +148,150 @@ public class FormCard : Gtk.Box {
             }
             var row = build_field (field);
             field_rows[field.key] = row;
-            fields_box.append (row);
+            pages.add_named (row, field.key);
         }
-        update_visibility ();
+        refresh_pages ();
+        show_page (0);
+    }
+
+    /* -- wizard navigation ------------------------------------------- */
+
+    /** Recomputes the visitable pages from the fields currently
+     *  visible under their `when` guards. */
+    private void refresh_pages () {
+        page_keys.clear ();
+        if (form != null) {
+            foreach (var field in form.fields) {
+                if (!field.hidden && field_visible (field)) {
+                    page_keys.add (field.key);
+                }
+            }
+        }
+        if (page_index > page_keys.size) {
+            page_index = page_keys.size;
+        }
+    }
+
+    private bool on_review_page () {
+        return page_index >= page_keys.size;
+    }
+
+    private void show_page (int index) {
+        page_index = int.max (0, int.min (index, page_keys.size));
+        error_label.visible = false;
+        if (on_review_page ()) {
+            build_review ();
+            pages.visible_child_name = "review";
+        } else {
+            pages.visible_child_name = page_keys[page_index];
+        }
+        update_nav_chrome ();
+    }
+
+    private void go_back () {
+        if (page_index > 0) {
+            show_page (page_index - 1);
+        }
+    }
+
+    private void go_next () {
+        if (form == null || on_review_page ()) {
+            submit ();
+            return;
+        }
+        if (page_keys.size == 1) {
+            submit ();
+            return;
+        }
+        var field = field_for (page_keys[page_index]);
+        if (field != null) {
+            string problem;
+            if (!validate (field, out problem)) {
+                error_label.label = problem;
+                error_label.visible = true;
+                return;
+            }
+        }
+        error_label.visible = false;
+        show_page (page_index + 1);
+    }
+
+    private FormField? field_for (string key) {
+        if (form == null) {
+            return null;
+        }
+        foreach (var field in form.fields) {
+            if (field.key == key) {
+                return field;
+            }
+        }
+        return null;
+    }
+
+    /** One review line per answered question: title plus a short
+     *  rendering of the current answer. */
+    private void build_review () {
+        Gtk.Widget? child = review_box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            review_box.remove (child);
+            child = next;
+        }
+        if (form == null) {
+            return;
+        }
+        foreach (var key in page_keys) {
+            var field = field_for (key);
+            if (field == null) {
+                continue;
+            }
+            var row = new Gtk.Box (Gtk.Orientation.VERTICAL, 2);
+            var title = new Gtk.Label (field.title) {
+                xalign = 0
+            };
+            title.add_css_class ("heading");
+            var answer = new Gtk.Label (answer_summary (field)) {
+                xalign = 0,
+                wrap = true,
+                ellipsize = Pango.EllipsizeMode.END
+            };
+            answer.add_css_class (Granite.CssClass.DIM);
+            row.append (title);
+            row.append (answer);
+            review_box.append (row);
+        }
+    }
+
+    private string answer_summary (FormField field) {
+        if (multi_checks.has_key (field.key)) {
+            var picked = new Gee.ArrayList<string> ();
+            foreach (var check in multi_checks[field.key]) {
+                if (check.active) {
+                    picked.add (check.label ?? check.get_data<string> ("option-value") ?? "");
+                }
+            }
+            return picked.size > 0 ? ListArrays.join (", ", picked) : "Nothing selected";
+        }
+        if (field.is_dropdown) {
+            var custom = inputs[field.key + "__custom"];
+            if (custom is Gtk.Entry && ((Gtk.Entry) custom).text.strip () != "") {
+                return ((Gtk.Entry) custom).text.strip ();
+            }
+            var dropdown = inputs[field.key];
+            if (dropdown is Gtk.DropDown) {
+                var options = ((Gtk.DropDown) dropdown).get_data<Gee.ArrayList<FormOption>> ("options");
+                var index = (int) ((Gtk.DropDown) dropdown).selected;
+                if (options != null && index >= 0 && index < options.size) {
+                    return options[index].label;
+                }
+            }
+            return "Nothing selected";
+        }
+        var text = current_value (field.key);
+        if (field.field_type == "boolean") {
+            return text == "true" ? "Yes" : "No";
+        }
+        return text != "" ? text : "No answer";
     }
 
     /* -- field building ---------------------------------------------- */
@@ -134,7 +311,7 @@ public class FormCard : Gtk.Box {
                 wrap = true,
                 max_width_chars = 60
             };
-            description.add_css_class ("dim-label");
+            description.add_css_class (Granite.CssClass.DIM);
             description.add_css_class ("caption");
             box.append (description);
         }
@@ -204,17 +381,17 @@ public class FormCard : Gtk.Box {
                     foreach (var option in field.options) {
                         labels.add (option.label);
                     }
-                    var dropdown = new Gtk.DropDown.from_strings (labels.to_array ()) {
-                        selected = 0,
-                        halign = Gtk.Align.START
-                    };
+                    var labels_array = ListArrays.to_string_array (labels);
+                    var dropdown = (Gtk.DropDown) OpenClient.drop_down_new_from_strings (labels_array);
+                    dropdown.selected = 0;
+                    dropdown.halign = Gtk.Align.START;
                     dropdown.set_data<Gee.ArrayList<FormOption>> ("options", field.options);
                     connect_changed (dropdown);
                     inputs[field.key] = dropdown;
                     box.append (dropdown);
                     if (field.custom) {
                         var entry = new Gtk.Entry () {
-                            placeholder_text = "Or type a custom answer…",
+                            placeholder_text = "Or type a custom answer",
                             margin_top = 4
                         };
                         connect_changed (entry);
@@ -269,6 +446,35 @@ public class FormCard : Gtk.Box {
             row.visible = field_visible (field);
         }
         applying = false;
+        /* Guards may have added or dropped pages ahead: re-filter and
+         *  keep the position valid without moving the user. */
+        var before = page_keys.size;
+        refresh_pages ();
+        if (page_keys.size != before) {
+            show_page (page_index);
+        } else {
+            update_nav_chrome ();
+        }
+    }
+
+    /** Refreshes the step indicator and buttons for the current page
+     *  without changing position (used when the page set is stable). */
+    private void update_nav_chrome () {
+        if (on_review_page ()) {
+            page_label.label = page_keys.size > 0 ? "Review answers" : "";
+        } else if (page_keys.size > 1) {
+            page_label.label = @"Question $(page_index + 1) of $(page_keys.size)";
+        } else {
+            page_label.label = "";
+        }
+        back_button.visible = page_index > 0;
+        if (on_review_page () || (page_keys.size == 1 && page_index == 0)) {
+            next_button.label = "Submit";
+        } else if (page_keys.size > 0 && page_index == page_keys.size - 1) {
+            next_button.label = "Review Answers";
+        } else {
+            next_button.label = "Continue";
+        }
     }
 
     private bool field_visible (FormField field) {

@@ -74,7 +74,7 @@ public class ToolCard : Gtk.Box {
             ellipsize = Pango.EllipsizeMode.END
         };
         summary_label.add_css_class ("tool-summary");
-        summary_label.add_css_class ("monospace");
+        summary_label.add_css_class (Granite.CssClass.MONOSPACE);
         texts.append (name_label);
         texts.append (summary_label);
 
@@ -82,7 +82,7 @@ public class ToolCard : Gtk.Box {
             pixel_size = 16,
             valign = Gtk.Align.CENTER
         };
-        icon.add_css_class ("dim-label");
+        icon.add_css_class (Granite.CssClass.DIM);
 
         header.append (status_stack);
         header.append (texts);
@@ -103,7 +103,7 @@ public class ToolCard : Gtk.Box {
             visible = false
         };
         input_label.add_css_class ("tool-detail");
-        input_label.add_css_class ("monospace");
+        input_label.add_css_class (Granite.CssClass.MONOSPACE);
 
         output_label = new Gtk.Label ("") {
             xalign = 0,
@@ -113,7 +113,7 @@ public class ToolCard : Gtk.Box {
             visible = false
         };
         output_label.add_css_class ("tool-output");
-        output_label.add_css_class ("monospace");
+        output_label.add_css_class (Granite.CssClass.MONOSPACE);
 
         files_box = new Gtk.FlowBox () {
             column_spacing = 8,
@@ -135,27 +135,28 @@ public class ToolCard : Gtk.Box {
         };
         append (details_expander);
 
-        tooltip_text = tool_name;
+        tooltip_text = display_name (tool_name);
     }
 
+    /** Display names are row titles, so AP title case. */
     public static string display_name (string tool) {
         switch (tool) {
             case "shell":
                 return "Shell";
             case "read":
-                return "Read file";
+                return "Read File";
             case "write":
-                return "Write file";
+                return "Write File";
             case "edit":
-                return "Edit file";
+                return "Edit File";
             case "webfetch":
                 return "Fetch URL";
             case "websearch":
-                return "Web search";
+                return "Web Search";
             case "grep":
                 return "Search";
             case "glob":
-                return "Find files";
+                return "Find Files";
             case "todo":
             case "todowrite":
                 return "Todo";
@@ -194,19 +195,21 @@ public class ToolCard : Gtk.Box {
         }
     }
 
+    /** First non-empty string member out of `keys`, or null. */
+    private static string? pick_string (Json.Object input, string[] keys) {
+        foreach (var key in keys) {
+            var value = JsonUtil.string_member (input, key);
+            if (value != null && value.strip () != "") {
+                return value.strip ();
+            }
+        }
+        return null;
+    }
+
     /** One-line human summary of a tool input object. */
     public static string summarize_input (string tool, Json.Object? input) {
         if (input == null) {
             return "";
-        }
-        string? pick (string[] keys) {
-            foreach (var key in keys) {
-                var value = JsonUtil.string_member (input, key);
-                if (value != null && value.strip () != "") {
-                    return value.strip ();
-                }
-            }
-            return null;
         }
 
         string? raw = null;
@@ -214,20 +217,20 @@ public class ToolCard : Gtk.Box {
             case "read":
             case "write":
             case "edit":
-                raw = pick ({ "path", "filePath", "file", "uri" });
+                raw = pick_string (input, { "path", "filePath", "file", "uri" });
                 break;
             case "shell":
-                raw = pick ({ "command" });
+                raw = pick_string (input, { "command" });
                 break;
             case "webfetch":
-                raw = pick ({ "url" });
+                raw = pick_string (input, { "url" });
                 break;
             case "websearch":
-                raw = pick ({ "query" });
+                raw = pick_string (input, { "query" });
                 break;
             case "grep":
             case "glob":
-                raw = pick ({ "pattern", "path" });
+                raw = pick_string (input, { "pattern", "path" });
                 break;
             default: {
                 foreach (var key in input.get_members ()) {
@@ -259,6 +262,10 @@ public class ToolCard : Gtk.Box {
         if (summary == "") {
             return;
         }
+        if (summary == last_input_summary) {
+            return;
+        }
+        last_input_summary = summary;
         summary_label.label = summary;
         input_label.label = summary;
         input_label.visible = true;
@@ -313,7 +320,7 @@ public class ToolCard : Gtk.Box {
             if (pixbuf == null) {
                 return;
             }
-            var picture = new Gtk.Picture.for_paintable (Gdk.Texture.for_pixbuf (pixbuf)) {
+            var picture = new Gtk.Picture.for_paintable (pixbuf_texture (pixbuf)) {
                 tooltip_text = file.display_name
             };
             picture.add_css_class ("attachment-image");
@@ -330,6 +337,8 @@ public class ToolCard : Gtk.Box {
         has_details = input_label.visible || output_label.visible || files_box.visible;
         details_expander.visible = has_details;
     }
+
+    private string last_input_summary = "\x00sentinel";
 }
 
 }

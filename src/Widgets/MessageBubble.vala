@@ -40,8 +40,26 @@ public class MessageBubble : Gtk.Box {
     private bool tools_seen = false;
     private bool files_seen = false;
     private bool text_queued = false;
+    /** Handle of the queued coalesced render, so a real render that is
+     *  already due can cancel it instead of running a second pass. */
+    private uint text_render_source = 0;
+    /** True for a coalesced render driven by streaming deltas (never
+     *  for a full render from history or turn completion), which is the
+     *  only path allowed to trade completeness for speed. */
+    private bool live_render = false;
+    /** True once a streaming render showed a capped tail, so the turn's
+     *  end knows the full text still has to be rendered. */
+    private bool tail_shown = false;
     /** History text beyond this is collapsed behind "Show more". */
     private const int HISTORY_TEXT_LIMIT = 2000;
+    /** Coalescing: snappy while the answer is small… */
+    private const int FAST_LIMIT = 8000;
+    /** …and throttled once it grows, so a long answer can't spend
+     *  every frame re-parsing its whole buffer. */
+    private const int SLOW_DELAY_MS = 250;
+    /** While streaming, only this much tail of the buffer is converted
+     *  per render. The whole answer is rendered once the turn ends. */
+    private const int LIVE_TAIL_LIMIT = 12000;
     private string? collapsed_full_text = null;
     private Gtk.Button? show_more_button = null;
 
@@ -195,7 +213,7 @@ public class MessageBubble : Gtk.Box {
                 show_more_button = new Gtk.Button.with_label ("Show more…") {
                     halign = Gtk.Align.START
                 };
-                show_more_button.add_css_class ("flat");
+                show_more_button.add_css_class (Granite.STYLE_CLASS_FLAT);
                 show_more_button.clicked.connect (expand_history_text);
                 content.append (show_more_button);
             }
@@ -225,6 +243,7 @@ public class MessageBubble : Gtk.Box {
         if (collapsed_full_text == null) {
             return;
         }
+        cancel_queued_render ();
         text_buffer = new StringBuilder ();
         text_buffer.append (collapsed_full_text);
         collapsed_full_text = null;
@@ -261,6 +280,7 @@ public class MessageBubble : Gtk.Box {
     }
 
     public void set_text (string text) {
+        cancel_queued_render ();
         collapsed_full_text = null;
         if (show_more_button != null) {
             content.remove (show_more_button);
@@ -273,7 +293,6 @@ public class MessageBubble : Gtk.Box {
         text_buffer.append (text);
         text_seen = true;
         content.visible = true;
-        text_queued = false;
         render_text ();
     }
 
@@ -303,6 +322,12 @@ public class MessageBubble : Gtk.Box {
             if (card.current_status == ToolStatus.RUNNING) {
                 card.set_status (ToolStatus.ERROR);
             }
+        }
+        /* The streaming pass may have shown a capped tail: settle the
+         * whole text now so nothing stays truncated. */
+        if (tail_shown || text_queued) {
+            cancel_queued_render ();
+            render_text ();
         }
     }
 
@@ -410,13 +435,27 @@ public class MessageBubble : Gtk.Box {
             return;
         }
         text_queued = true;
-        /* Coalesce rapid streaming deltas into ~30fps re-renders
-         * instead of re-parsing the whole buffer on every event. */
-        GLib.Timeout.add (33, () => {
+        /* Coalesce rapid streaming deltas: ~30fps while the answer is
+         * small, throttled once it grows, instead of re-parsing the
+         * whole buffer on every event. */
+        uint delay = text_buffer.len > FAST_LIMIT ? SLOW_DELAY_MS : 33;
+        text_render_source = GLib.Timeout.add (delay, () => {
+            text_render_source = 0;
             text_queued = false;
+            live_render = true;
             render_text ();
+            live_render = false;
             return false;
         });
+    }
+
+    /** Cancels a queued streaming render (a real render won the race). */
+    private void cancel_queued_render () {
+        if (text_render_source != 0) {
+            GLib.Source.remove (text_render_source);
+            text_render_source = 0;
+        }
+        text_queued = false;
     }
 
     private string last_rendered = "";
@@ -430,6 +469,20 @@ public class MessageBubble : Gtk.Box {
             return;
         }
         last_rendered = source;
+
+        /* A long answer is one growing widget, and the Markdown pass is
+         * O(len): parsing the entire buffer on every coalesced render
+         * makes a stream quadratic in the answer's length. While the
+         * answer is still streaming, convert only a bounded tail cut
+         * at a paragraph boundary (the ellipsis mirrors the history
+         * truncation above); the complete text renders once when the
+         * turn ends. */
+        if (live_render && source.length > LIVE_TAIL_LIMIT) {
+            source = streaming_tail (source);
+            tail_shown = true;
+        } else {
+            tail_shown = false;
+        }
 
         /* Drop whitespace-only prose: it renders no widget. */
         var blocks = new Gee.ArrayList<Markdown.Block> ();
@@ -496,6 +549,23 @@ public class MessageBubble : Gtk.Box {
             block_widgets.add (widget);
         }
         text_box.visible = text_box.get_first_child () != null;
+    }
+
+    /* -- streaming render -------------------------------------------- */
+
+    /** Bounded view of a long answer for the coalesced streaming pass:
+     *  the last paragraphs only, cut at a paragraph boundary so no
+     *  fence or table is sliced in half. */
+    private string streaming_tail (string full) {
+        var start = full.length - LIVE_TAIL_LIMIT;
+        var cut = full.last_index_of ("\n\n", (int) start);
+        if (cut < start - 1) {
+            cut = full.last_index_of ("\n", (int) start);
+        }
+        if (cut > 0 && cut + 2 < full.length) {
+            return "…\n\n" + full.substring (cut + 1);
+        }
+        return full;
     }
 
     /** Same widget shape: same count, same kinds, same table dims. */
@@ -607,7 +677,7 @@ public class MessageBubble : Gtk.Box {
             selectable = true
         };
         body.add_css_class ("tool-output");
-        body.add_css_class ("monospace");
+        body.add_css_class (Granite.CssClass.MONOSPACE);
         body.add_css_class ("md-code-body");
         body.set_markup ("<tt>" + GLib.Markup.escape_text (block.text) + "</tt>");
         box.append (body);
@@ -641,7 +711,7 @@ public class MessageBubble : Gtk.Box {
             file.load_pixbuf_async.begin (280, (obj, res) => {
                 var pixbuf = file.load_pixbuf_async.end (res);
                 if (pixbuf != null) {
-                    var texture = Gdk.Texture.for_pixbuf (pixbuf);
+                    var texture = pixbuf_texture (pixbuf);
                     var picture = new Gtk.Picture.for_paintable (texture) {
                         halign = Gtk.Align.START,
                         width_request = int.min (280, pixbuf.width),

@@ -137,6 +137,7 @@ public class ChatView : Gtk.Box {
         }
         bubbles.clear ();
         dividers.clear ();
+        pending_models.clear ();
         latest_pill.visible = false;
     }
 
@@ -151,6 +152,7 @@ public class ChatView : Gtk.Box {
      *  of model work: the rotating quips give way to a static
      *  "waiting" line until the turn resumes or ends. */
     public void set_pending_state (PendingState state) {
+        bool repeated = (state == pending_state) && pending_box != null;
         pending_state = state;
         if (pending_box == null) {
             pending_spinner = new BrailleSpinner ();
@@ -159,7 +161,7 @@ public class ChatView : Gtk.Box {
                 xalign = 0,
                 ellipsize = Pango.EllipsizeMode.END
             };
-            pending_label.add_css_class ("dim-label");
+            pending_label.add_css_class (Granite.CssClass.DIM);
             pending_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
                 margin_top = 6,
                 margin_bottom = 6,
@@ -169,11 +171,16 @@ public class ChatView : Gtk.Box {
             pending_box.append (pending_spinner);
             pending_box.append (pending_label);
             message_box.append (pending_box);
-        } else {
+        } else if (!repeated) {
+            /* Only move the footer when the state actually changed:
+             *  permission/question flips arrive in bursts, and each one
+             *  would otherwise reparent + rescroll for nothing. */
             pin_pending_last ();
         }
         apply_pending_text ();
-        scroll_to_bottom ();
+        if (!repeated) {
+            scroll_to_bottom ();
+        }
     }
 
     /** Picks the footer line for the current state: rotating playful
@@ -255,10 +262,18 @@ public class ChatView : Gtk.Box {
      *  (Re-append, not reorder: GtkBox treats a NULL sibling as the
      *  first position, which is the wrong end here.) */
     private void pin_pending_last () {
-        if (pending_box != null && pending_box.get_parent () == message_box) {
-            message_box.remove (pending_box);
-            message_box.append (pending_box);
+        if (pending_box == null || pending_box.get_parent () != message_box) {
+            return;
         }
+        /* Already the last child (the common case when messages stream
+         * in one after another): skipping the move avoids GTK
+         * unparenting/reparenting the footer and re-measuring every
+         * sibling in the box for a no-op. */
+        if (message_box.get_last_child () == pending_box) {
+            return;
+        }
+        message_box.remove (pending_box);
+        message_box.append (pending_box);
     }
 
     public void add_message (Message message, bool force_scroll = false) {
@@ -285,6 +300,8 @@ public class ChatView : Gtk.Box {
             if (bulk_loading) {
                 return;
             }
+            /* Live arrival (not a history rebuild): play the entrance. */
+            divider.add_css_class ("chat-arrive");
             pin_pending_last ();
             if (!force_scroll) {
                 pending_top_widget = divider;
@@ -299,6 +316,7 @@ public class ChatView : Gtk.Box {
         if (bulk_loading) {
             return;
         }
+        bubble.add_css_class ("chat-arrive");
         pin_pending_last ();
         if (!force_scroll) {
             pending_top_widget = bubble;
@@ -376,9 +394,13 @@ public class ChatView : Gtk.Box {
         var bubble = new MessageBubble (message);
         if (pending_models.has_key (message_id)) {
             bubble.set_model (pending_models[message_id]);
+            pending_models.unset (message_id);
         }
         bubbles[message_id] = bubble;
         message_box.append (bubble);
+        /* A streamed turn opening its bubble: same entrance as any
+         *  other live arrival. */
+        bubble.add_css_class ("chat-arrive");
         /* Streamed content must never bury the footer: it stays
          * pinned at the very bottom until the turn ends. */
         pin_pending_last ();
@@ -447,7 +469,9 @@ public class ChatView : Gtk.Box {
     }
 
     private void update_pill () {
-        latest_pill.visible = !stick_to_bottom;
+        if (latest_pill.visible == stick_to_bottom) {
+            latest_pill.visible = !stick_to_bottom;
+        }
     }
 
     public void scroll_to_bottom (bool force = false) {
@@ -468,11 +492,20 @@ public class ChatView : Gtk.Box {
     /** Pins the viewport to the newest line. */
     private void pin_to_bottom () {
         var adjustment = scrolled.vadjustment;
-        if (adjustment != null) {
-            programmatic_scroll = true;
-            adjustment.set_value (adjustment.upper - adjustment.page_size);
-            programmatic_scroll = false;
+        if (adjustment == null) {
+            return;
         }
+        var target = adjustment.upper - adjustment.page_size;
+        /* Already showing the newest line — the common case while a
+         * turn streams, since every delta re-enters this method. Writing
+         * the same value again only emits adjustment signals, so the
+         * check is what keeps streaming cheap. */
+        if (adjustment.value >= target - 0.5) {
+            return;
+        }
+        programmatic_scroll = true;
+        adjustment.set_value (target);
+        programmatic_scroll = false;
     }
 
     /** Reveals a new message from its first line. */
@@ -481,10 +514,16 @@ public class ChatView : Gtk.Box {
         if (adjustment == null) {
             return;
         }
-        Gtk.Allocation alloc;
-        widget.get_allocation (out alloc);
+        /* Y inside the scrolled viewport: translate the widget's own
+         *  top-left relative to the message list. Widget.get_allocation
+         *  is deprecated and only gives the widget-local box. */
+        Graphene.Point top;
+        if (!widget.compute_point (message_box, Graphene.Point.zero (), out top)) {
+            /* Not in the same hierarchy (yet): nothing to reveal. */
+            return;
+        }
         var max = adjustment.upper - adjustment.page_size;
-        scroll_to_value (double.min (alloc.y, double.max (0, max)));
+        scroll_to_value (double.min (top.y, double.max (0, max)));
     }
 
     private void scroll_to_value (double target) {

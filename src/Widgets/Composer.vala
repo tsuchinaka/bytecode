@@ -75,6 +75,17 @@ public class Composer : Gtk.Box {
     private Gtk.Revealer attachments_revealer;
     private Gtk.FlowBox attachments_box;
     private Gee.ArrayList<Attachment> attachments;
+    /** Decoded 64px attachment thumbnails, keyed by file path, so
+     *  re-listing the chips doesn't re-decode every image. */
+    private Gee.HashMap<string, Gdk.Pixbuf?> thumbnail_cache;
+    /** Last query the slash-command popup was built for, so typing
+     *  that doesn't change it doesn't rebuild the rows. */
+    private string last_command_query = "\x00sentinel";
+    /** Last meter value/band/label written, so repeated usage events
+     *  with the same numbers don't invalidate layout. */
+    private double last_context_value = -1.0;
+    private string last_context_band = "";
+    private string last_context_label = "\x00sentinel";
 
     public Composer () {
         Object (
@@ -87,6 +98,7 @@ public class Composer : Gtk.Box {
         margin_end = 12;
 
         attachments = new Gee.ArrayList<Attachment> ();
+        thumbnail_cache = new Gee.HashMap<string, Gdk.Pixbuf?> ();
 
         commands = new Gee.ArrayList<CommandInfo> ();
         commands.add (new CommandInfo () { name = "compact", description = "Compact the session context", builtin = true });
@@ -110,7 +122,7 @@ public class Composer : Gtk.Box {
 
         /* Permission request banner */
         var permission_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
-        permission_box.add_css_class ("card");
+        permission_box.add_css_class (Granite.CssClass.CARD);
         permission_box.add_css_class ("permission-banner");
         permission_box.margin_bottom = 6;
         permission_box.margin_top = 2;
@@ -128,11 +140,11 @@ public class Composer : Gtk.Box {
         };
 
         var reject_button = new Gtk.Button.with_label ("Reject");
-        reject_button.add_css_class ("flat");
+        reject_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         reject_button.clicked.connect (() => decide_permission ("reject"));
 
         var always_button = new Gtk.Button.with_label ("Always");
-        always_button.add_css_class ("flat");
+        always_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         always_button.clicked.connect (() => decide_permission ("always"));
 
         var once_button = new Gtk.Button.with_label ("Allow Once");
@@ -199,7 +211,7 @@ public class Composer : Gtk.Box {
             child = text_view
         };
 
-        placeholder_label = new Gtk.Label ("Send a message…  (paste or drop images to attach)") {
+        placeholder_label = new Gtk.Label ("Send a message (paste or drop images to attach)") {
             xalign = 0,
             yalign = 0,
             halign = Gtk.Align.START,
@@ -264,7 +276,7 @@ public class Composer : Gtk.Box {
         text_view.add_controller (key_controller);
 
         var drop_target = new Gtk.DropTarget (typeof (Gdk.FileList), Gdk.DragAction.COPY);
-        drop_target.on_drop.connect ((value, x, y) => on_files_dropped (value));
+        drop_target.drop.connect ((value, x, y) => on_files_dropped (value));
         text_view.add_controller (drop_target);
 
         /* Context meter row */
@@ -276,7 +288,7 @@ public class Composer : Gtk.Box {
             xalign = 1,
             valign = Gtk.Align.CENTER
         };
-        context_label.add_css_class ("dim-label");
+        context_label.add_css_class (Granite.CssClass.DIM);
         context_label.add_css_class ("caption");
         context_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
             margin_start = 12,
@@ -305,7 +317,7 @@ public class Composer : Gtk.Box {
             visible = false,
             tooltip_text = "View changes"
         };
-        diff_button.add_css_class ("flat");
+        diff_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         diff_button.add_css_class ("diff-chip");
         diff_button.clicked.connect (() => diff_requested ());
 
@@ -313,7 +325,7 @@ public class Composer : Gtk.Box {
             tooltip_text = "Attach images",
             valign = Gtk.Align.CENTER
         };
-        attach_button.add_css_class ("flat");
+        attach_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         attach_button.clicked.connect (() => pick_images ());
 
         stop_button = new Gtk.Button.from_icon_name ("media-playback-stop") {
@@ -321,7 +333,7 @@ public class Composer : Gtk.Box {
             visible = false,
             valign = Gtk.Align.CENTER
         };
-        stop_button.add_css_class ("flat");
+        stop_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         stop_button.clicked.connect (() => stop_requested ());
 
         send_button = new Gtk.Button.from_icon_name ("mail-send") {
@@ -335,7 +347,7 @@ public class Composer : Gtk.Box {
             tooltip_text = "Permission mode (click to cycle)",
             valign = Gtk.Align.CENTER
         };
-        permission_mode_button.add_css_class ("flat");
+        permission_mode_button.add_css_class (Granite.STYLE_CLASS_FLAT);
         permission_mode_button.clicked.connect (() => cycle_permission_mode ());
         update_permission_mode_button ();
 
@@ -367,7 +379,6 @@ public class Composer : Gtk.Box {
         command_list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.SINGLE
         };
-        command_list.add_css_class ("rich-list");
         command_list.add_css_class ("picker-list");
         command_list.row_activated.connect ((row) => {
             var command_row = (CommandRow) row;
@@ -396,6 +407,9 @@ public class Composer : Gtk.Box {
         foreach (var command in server_commands) {
             commands.add (command);
         }
+        /* The row list is now stale: force a rebuild on the next
+         *  popup even if the query didn't change. */
+        last_command_query = "\x00sentinel";
     }
 
     private void update_command_popup () {
@@ -414,6 +428,11 @@ public class Composer : Gtk.Box {
     }
 
     private void rebuild_command_list (string query) {
+        if (query == last_command_query) {
+            return;
+        }
+        last_command_query = query;
+
         Gtk.Widget? child = command_list.get_first_child ();
         while (child != null) {
             var next = child.get_next_sibling ();
@@ -506,17 +525,28 @@ public class Composer : Gtk.Box {
         }
         context_row.visible = true;
         var clamped = double.min (1.0, double.max (0.0, fraction));
-        context_bar.value = clamped;
-        /* Color ramp lives here, not in offset selectors (see style.css). */
-        context_bar.remove_css_class ("context-high");
-        context_bar.remove_css_class ("context-full");
-        if (clamped >= 0.92) {
-            context_bar.add_css_class ("context-full");
-        } else if (clamped >= 0.75) {
-            context_bar.add_css_class ("context-high");
+        /* Guarded: usage events arrive several times per second, and
+         *  writing an identical value (re)invalidates layout/style. */
+        if (clamped != last_context_value) {
+            context_bar.value = clamped;
+            last_context_value = clamped;
         }
-        context_label.label = label;
-        context_label.tooltip_text = @"Context used: $(label)";
+        /* Color ramp lives here, not in offset selectors (see style.css). */
+        string band = clamped >= 0.92 ? "context-full"
+            : (clamped >= 0.75 ? "context-high" : "");
+        if (band != last_context_band) {
+            context_bar.remove_css_class ("context-high");
+            context_bar.remove_css_class ("context-full");
+            if (band != "") {
+                context_bar.add_css_class (band);
+            }
+            last_context_band = band;
+        }
+        if (label != last_context_label) {
+            context_label.label = label;
+            context_label.tooltip_text = @"Context used: $(label)";
+            last_context_label = label;
+        }
     }
 
     /* -- permissions -------------------------------------------------- */
@@ -624,25 +654,22 @@ public class Composer : Gtk.Box {
         }
         /* Some file managers only advertise text/uri-list. */
         if (formats.contain_mime_type ("text/uri-list")) {
-            clipboard.read_async.begin (
-                new string[] { "text/uri-list" },
-                GLib.Priority.DEFAULT,
-                null,
-                (obj, res) => {
-                    try {
-                        string mime = "";
-                        var stream = clipboard.read_async.end (res, out mime);
-                        if (stream != null) {
-                            ingest_uri_list (stream);
-                        }
-                    } catch (Error e) {
-                        warning ("Paste URI list failed: %s", e.message);
-                    }
-                }
-            );
+            read_clipboard_uri_list.begin (clipboard);
             return true;
         }
         return false;
+    }
+
+    /** Reads a uri-list from the clipboard and ingests it. */
+    private async void read_clipboard_uri_list (Gdk.Clipboard clipboard) {
+        try {
+            var stream = yield OpenClient.clipboard_read_stream (clipboard, "text/uri-list");
+            if (stream != null) {
+                ingest_uri_list (stream);
+            }
+        } catch (Error e) {
+            warning ("Paste URI list failed: %s", e.message);
+        }
     }
 
     private void ingest_uri_list (GLib.InputStream stream) {
@@ -699,19 +726,17 @@ public class Composer : Gtk.Box {
             return;
         }
 
-        SourceFunc callback = attach_file_async.callback;
         string? mime = null;
 
         /* MIME sniffing hits the disk; keep it off the main thread. */
-        Work.submit (() => {
+        Work.submit_with_resume (() => {
             try {
                 var info = file.query_info ("standard::content-type", GLib.FileQueryInfoFlags.NONE);
                 mime = info.get_content_type ();
             } catch (Error e) {
                 warning ("Could not read %s: %s", path, e.message);
             }
-            Work.resume (callback);
-        });
+        }, attach_file_async.callback);
 
         yield;
 
@@ -756,6 +781,13 @@ public class Composer : Gtk.Box {
         });
     }
 
+    /** Shows a decoded pixbuf in an image widget. Gtk.Image's pixbuf
+     *  setter was deprecated in GTK 4.12 in favour of taking a
+     *  Gdk.Paintable, so the pixbuf is wrapped once. */
+    private static void set_picture (Gtk.Image image, Gdk.Pixbuf pixbuf) {
+        image.set_from_paintable (pixbuf_texture (pixbuf));
+    }
+
     private void rebuild_attachment_chips () {
         Gtk.Widget? child = attachments_box.get_first_child ();
         while (child != null) {
@@ -783,7 +815,7 @@ public class Composer : Gtk.Box {
                 tooltip_text = "Remove",
                 valign = Gtk.Align.CENTER
             };
-            remove_button.add_css_class ("flat");
+            remove_button.add_css_class (Granite.STYLE_CLASS_FLAT);
             remove_button.clicked.connect (() => {
                 attachments.remove (captured);
                 rebuild_attachment_chips ();
@@ -792,21 +824,32 @@ public class Composer : Gtk.Box {
 
             attachments_box.append (chip);
 
-            /* Decode the thumbnail off the main thread, then swap it in. */
+            /* Decode the thumbnail off the main thread, then swap it in.
+             *  Result is cached per path: re-listing the chips (adding
+             *  or removing one attachment) used to re-submit a decode
+             *  for every attachment every time. */
             var path = attachment.path;
-            Work.submit (() => {
-                Gdk.Pixbuf? pixbuf = null;
-                try {
-                    pixbuf = new Gdk.Pixbuf.from_file_at_scale (path, 64, 64, true);
-                } catch (Error e) {
+            if (thumbnail_cache.has_key (path)) {
+                var cached = thumbnail_cache[path];
+                if (cached != null) {
+                    set_picture (thumbnail, cached);
                 }
-                Idle.add (() => {
-                    if (pixbuf != null) {
-                        thumbnail.set_from_pixbuf (pixbuf);
+            } else {
+                Work.submit (() => {
+                    Gdk.Pixbuf? pixbuf = null;
+                    try {
+                        pixbuf = new Gdk.Pixbuf.from_file_at_scale (path, 64, 64, true);
+                    } catch (Error e) {
                     }
-                    return false;
+                    thumbnail_cache[path] = pixbuf;
+                    Idle.add (() => {
+                        if (pixbuf != null) {
+                            set_picture (thumbnail, pixbuf);
+                        }
+                        return false;
+                    });
                 });
-            });
+            }
         }
 
         attachments_revealer.reveal_child = attachments.size > 0;
@@ -851,7 +894,7 @@ public class CommandRow : Gtk.ListBoxRow {
         var name_label = new Gtk.Label (@"/$(command.name)") {
             xalign = 0
         };
-        name_label.add_css_class ("monospace");
+        name_label.add_css_class (Granite.CssClass.MONOSPACE);
         box.append (name_label);
 
         var description_label = new Gtk.Label (command.description) {
@@ -859,7 +902,7 @@ public class CommandRow : Gtk.ListBoxRow {
             hexpand = true,
             ellipsize = Pango.EllipsizeMode.END
         };
-        description_label.add_css_class ("dim-label");
+        description_label.add_css_class (Granite.CssClass.DIM);
         description_label.add_css_class ("caption");
         box.append (description_label);
 
