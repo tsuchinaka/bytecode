@@ -44,6 +44,12 @@ builds it natively for elementary OS:
 - `src/Widgets/` — sidebar, chat view, message bubbles, composer,
   connection dialog. Two-pane layout following the elementary OS
   panes pattern.
+- `src/GtkCompat.vala` + `src/gtk-compat.c` — the only hand-written C in
+  the project. GTK 4.22 declares some array parameters as
+  `const char * const *` and a few widgets as their base type, which
+  Vala 0.56 cannot express; GCC 14 treats the resulting mismatch as a
+  warning it will not let you disable, so those handful of calls go
+  through a cast-and-forward shim. Everything else warns clean.
 
 ## Requirements
 
@@ -57,15 +63,31 @@ sudo apt install valac meson libgtk-4-dev libgranite-7-dev \
                  libsoup-3.0-dev libjson-glib-dev libgee-0.8-dev
 ```
 
-## Running the server
+## The server
+
+The app runs its own `opencode serve` — there is no server to start and
+no password to paste:
+
+- **Its own port** (4599 by default). If something else already holds
+  that port, the app takes the next free one and remembers it.
+- **Its own passcode**, generated on first run and kept in the config.
+  The server is started with it in the environment, so it never appears
+  on a command line or in the log.
+- **Its own lifecycle**: the server starts with the app and is stopped
+  when the app exits (including logout/kill). A server left behind by an
+  earlier run is adopted rather than duplicated.
+- **Its own log**: `~/.local/state/opencode-client/serve.log`, reachable
+  from Settings → Connection → "Server Log".
+
+Settings → Connection shows the command, port and passcode, with
+"Apply & Restart Server" to change them. Turn the switch off to point
+the app at a server you run yourself instead (host, port, password) —
+for example a shared server the TUI is attached to.
 
 ```bash
-opencode serve --port 4096
+# optional: pin the passcode of the app's own server
+OPENCODE_PASSWORD=… io.github.haruki.openclient
 ```
-
-The server prints a password at startup (also honored:
-`OPENCODE_PASSWORD` in the environment). Enter host, port and password
-in the app's connection dialog on first run.
 
 ## Building
 
@@ -86,9 +108,45 @@ Or install system-wide:
 sudo meson install -C build
 ```
 
+### Local install (binary + .desktop + icons)
+
+Fresh machines — build dependencies first:
+
+```bash
+sudo apt install valac meson ninja-build pkg-config libgtk-4-dev \
+                 libgranite-7-dev libsoup-3.0-dev libjson-glib-dev libgee-0.8-dev
+```
+
+Then, from the project root:
+
+```bash
+./install-local.sh
+```
+
+That compiles, installs into `~/.local` (binary in `~/.local/bin`, the
+`.desktop` entry in `~/.local/share/applications`, all icons under
+`~/.local/share/icons`) and refreshes the icon and desktop caches. It is
+also the *update* path: re-run it after pulling and it rebuilds and
+replaces the binary, `.desktop` entry, metainfo and icons in place.
+
+Useful variants:
+
+```bash
+./install-local.sh --no-build   # reuse the current build/ tree
+./install-local.sh --prefix=... # install somewhere else
+```
+
+The `.desktop` file ships with an absolute `Exec` path from the machine
+it was authored on; the script rewrites it for the current user, so the
+entry (including the "New Session" action) works everywhere.
+
 ## Features
 
 - Sessions: list, create, delete, rename, fork
+- Bulk delete: the sidebar's select toggle turns every row into a
+  checkbox (click a row to tick it), with select-all and one
+  confirmation for the whole batch — the open conversation closes if it
+  was part of it, and pin/archive flags go with the sessions
 - Live CLI sync: prompts sent from the CLI appear instantly, titles
   update live, reconnects resync automatically
 - Chat with throttled streaming text + reasoning (coalesced renders,
@@ -184,7 +242,9 @@ sudo meson install -C build
 - Context meter per session (input tokens vs model limit)
 - Session changes viewer (unified diffs per file)
 - Context compaction from the sidebar
-- Connection dialog with validation, config in
+- Runs and owns its `opencode serve` (dedicated port + passcode,
+  started and stopped with the app, adopt-or-restart), or connects to a
+  server you run yourself; config in
   `~/.config/opencode-client/client.conf`
 - Follows the system light/dark color scheme (and adapts live),
   keyboard shortcuts (`Ctrl+N` new session, `Ctrl+,` settings)
@@ -192,7 +252,6 @@ sudo meson install -C build
 ## Roadmap
 
 - [ ] Markdown: syntax highlighting for code blocks
-- [ ] Manage the `opencode serve` process from the app
 - [ ] Flatpak packaging
 
 ## Configuration
@@ -200,6 +259,14 @@ sudo meson install -C build
 Stored in `~/.config/opencode-client/client.conf`:
 
 ```ini
+# The app's own server (used while [server] managed=true).
+[server]
+managed=true
+command=opencode
+port=4599
+password=<generated on first run>
+
+# A server you run yourself (used while managed=false).
 [connection]
 host=127.0.0.1
 port=4096
@@ -207,7 +274,8 @@ password=...
 ```
 
 Environment overrides: `OPENCODE_HOST`, `OPENCODE_PORT`,
-`OPENCODE_PASSWORD`.
+`OPENCODE_PASSWORD` (in managed mode the passcode is also what the
+app's server is started with).
 
 ## License
 

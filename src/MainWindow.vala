@@ -27,9 +27,12 @@ public class MainWindow : Gtk.ApplicationWindow {
     private Gtk.Label subtitle_label;
     private Gtk.Label error_label;
     private Gtk.Spinner loading_spinner;
+    private Gtk.Label loading_label;
     private Gtk.Overlay overlay;
     private Granite.Toast toast;
     private uint render_source = 0;
+    /** Coalesced inspector refresh (see refresh_panel). */
+    private uint panel_source = 0;
     /** Last known status per session, to detect turn-end transitions. */
     private Gee.HashMap<string, string> last_status = new Gee.HashMap<string, string> ();
     /** True while the new-session hero is up: no existing session
@@ -48,8 +51,11 @@ public class MainWindow : Gtk.ApplicationWindow {
         setup_actions ();
         build_ui ();
         connect_store ();
+        /* A logout or kill must take the app's server with it. */
+        app.watch_signals ();
         start_connection.begin ();
     }
+
 
     private void build_ui () {
         /* Start pane: sidebar */
@@ -97,7 +103,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                 @"Delete “$title”?",
                 "The conversation and its context will be permanently removed."
             );
-            dialog.set_buttons ({ "Cancel", "Delete" });
+            OpenClient.set_alert_buttons (dialog, new string[] { "Cancel", "Delete" });
             dialog.set_cancel_button (0);
             dialog.set_default_button (0);
             dialog.choose.begin (this, null, (obj, res) => {
@@ -109,11 +115,17 @@ public class MainWindow : Gtk.ApplicationWindow {
                 }
             });
         });
+        sidebar.sessions_delete_requested.connect ((session_ids) => {
+            delete_sessions (session_ids);
+        });
         sidebar.session_rename_requested.connect ((session_id) => {
             show_rename_dialog (session_id);
         });
         sidebar.session_diff_requested.connect ((session_id) => {
             show_diff_dialog (session_id);
+        });
+        sidebar.session_export_requested.connect ((session_id) => {
+            export_session.begin (session_id);
         });
         sidebar.session_fork_requested.connect ((session_id) => {
             app.store.fork_session.begin (session_id);
@@ -128,9 +140,13 @@ public class MainWindow : Gtk.ApplicationWindow {
             app.store.set_archived (session_id, archived);
         });
 
+        /* The whole start pane shares the theme sidebar background —
+         *  header, list and action bar read as one column instead of
+         *  the header floating on window background above it. */
         var start_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
             width_request = 280
         };
+        start_box.add_css_class (Granite.STYLE_CLASS_SIDEBAR);
         start_box.append (start_header);
         start_box.append (sidebar);
 
@@ -180,7 +196,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             visible = false
         };
         subtitle_label.add_css_class ("caption");
-        subtitle_label.add_css_class ("dim-label");
+        subtitle_label.add_css_class (Granite.CssClass.DIM);
         title_box.append (title_label);
         title_box.append (subtitle_label);
         end_header.set_title_widget (title_box);
@@ -276,16 +292,29 @@ public class MainWindow : Gtk.ApplicationWindow {
             width_request = 32,
             height_request = 32
         };
+        loading_label = new Gtk.Label ("Connecting…") {
+            halign = Gtk.Align.CENTER,
+            wrap = true,
+            justify = Gtk.Justification.CENTER,
+            max_width_chars = 50
+        };
+        loading_label.add_css_class (Granite.CssClass.DIM);
+        var loading_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 12) {
+            halign = Gtk.Align.CENTER,
+            valign = Gtk.Align.CENTER
+        };
+        loading_box.append (loading_spinner);
+        loading_box.append (loading_label);
 
         error_label = new Gtk.Label ("") {
             wrap = true,
             justify = Gtk.Justification.CENTER,
             max_width_chars = 50
         };
-        error_label.add_css_class ("dim-label");
+        error_label.add_css_class (Granite.CssClass.DIM);
 
         var offline_placeholder = new Granite.Placeholder ("Can't reach OpenCode") {
-            description = "Make sure the server is running: `opencode serve`"
+            description = "The app server did not answer."
         };
         offline_placeholder.icon = new ThemedIcon ("network-server");
         var retry_button = offline_placeholder.append_button (
@@ -321,7 +350,12 @@ public class MainWindow : Gtk.ApplicationWindow {
             show_new_session ();
         });
 
-        empty_stack = new Gtk.Stack ();
+        empty_stack = new Gtk.Stack () {
+            /* Chat ⇄ hero ⇄ empty states crossfade; page-level slides
+             *  live on end_stack (chat ⇄ settings). */
+            transition_type = Gtk.StackTransitionType.CROSSFADE,
+            transition_duration = 180
+        };
         empty_stack.add_named (empty_placeholder, "no-session");
         empty_stack.add_named (chat_box, "chat");
         new_session_view = new NewSessionView () {
@@ -357,7 +391,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             while (recents.size > 6) {
                 recents.remove_at (recents.size - 1);
             }
-            app.config.workspace_history = recents.to_array ();
+            app.config.workspace_history = ListArrays.to_string_array (recents);
             app.config.save ();
             new_session_view.set_recent_folders (recents);
         });
@@ -381,8 +415,12 @@ public class MainWindow : Gtk.ApplicationWindow {
         });
         empty_stack.add_named (new_session_view, "new");
 
-        content_stack = new Gtk.Stack ();
-        content_stack.add_named (loading_spinner, "loading");
+        content_stack = new Gtk.Stack () {
+            /* Loading ⇄ offline ⇄ content crossfade with the rest. */
+            transition_type = Gtk.StackTransitionType.CROSSFADE,
+            transition_duration = 180
+        };
+        content_stack.add_named (loading_box, "loading");
         content_stack.add_named (offline_box, "offline");
         content_stack.add_named (empty_stack, "content");
         content_stack.visible_child_name = "loading";
@@ -397,7 +435,7 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         /* Settings page: its own header (back + title + window
          * controls) with the in-window settings view below. */
-        settings_view = new SettingsView (app.config, app.store);
+        settings_view = new SettingsView (app.config, app.store, app.server);
         var settings_header = new Gtk.HeaderBar () {
             show_title_buttons = false
         };
@@ -492,8 +530,8 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         /* Keyboard shortcuts live on actions so tooltips can surface
          * them through Granite.markup_accel_tooltip (). */
-        app.set_accels_for_action ("win.new-session", { "<Control>n" });
-        app.set_accels_for_action ("win.settings", { "<Control>comma" });
+        OpenClient.set_action_accels (app, "win.new-session", new string[] { "<Control>n" });
+        OpenClient.set_action_accels (app, "win.settings", new string[] { "<Control>comma" });
     }
 
     private void show_toast (string message) {
@@ -519,6 +557,9 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         if (pending.size == 0) {
             chat_view.scroll_to_bottom (true);
+            /* Nothing to stream in: callers waiting on the rebuild may
+             *  finish now instead of on the next idle round. */
+            chat_rebuilt ();
             return;
         }
 
@@ -537,11 +578,18 @@ public class MainWindow : Gtk.ApplicationWindow {
             if (index >= pending.size) {
                 chat_view.end_bulk ();
                 render_source = 0;
+                chat_rebuilt ();
                 return false;
             }
             return true;
         });
     }
+
+    /** Signals that rebuild_chat() finished inserting every row.
+     *  Anything that must land after the conversation (replaying an
+     *  in-flight turn) runs here rather than polling for the idle
+     *  source to disappear. */
+    private signal void chat_rebuilt ();
 
     private void connect_store () {
         var store = app.store;
@@ -640,19 +688,18 @@ public class MainWindow : Gtk.ApplicationWindow {
              * state — working quips, or what it is waiting on. */
             restore_pending_footer ();
             /* Opened mid-turn part two: history lacks the partial
-             * reply, the live cache has it. Replay once the
-             * incremental rebuild settles so replayed bubbles land
-             * last instead of buried mid-history. */
+             * reply, the live cache has it. Replay once the incremental
+             * rebuild settles so replayed bubbles land last instead of
+             * buried mid-history (chat_rebuilt fires from the last
+             * batch — no polling for the rebuild to finish). */
             var replay_id = store.active_session_id;
             if (replay_id != null) {
-                GLib.Timeout.add (120, () => {
-                    if (render_source != 0) {
-                        return true;
-                    }
-                    if (replay_id == store.active_session_id) {
+                ulong handler = 0;
+                handler = chat_rebuilt.connect (() => {
+                    this.disconnect (handler);
+                    if (replay_id == app.store.active_session_id) {
                         replay_live (replay_id);
                     }
-                    return false;
                 });
             }
         });
@@ -825,16 +872,15 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         store.forms_changed.connect ((session_id) => {
             update_form_dock ();
+            var form = store.pending_form_for (session_id);
             if (session_id == store.active_session_id) {
-                var form = store.pending_form_for (session_id);
                 composer.set_running (store.is_active_running, form != null ? "Answer the question above" : null);
             }
-            var pending = store.pending_form_for (session_id);
-            if (pending != null) {
+            if (form != null) {
                 if (app.config.notifications_enabled && app.config.notify_questions
                     && (session_id != store.active_session_id || !is_active)) {
                     var notification = new GLib.Notification ("Input needed");
-                    notification.set_body (@"$(session_title (session_id)): $(pending.title)");
+                    notification.set_body (@"$(session_title (session_id)): $(form.title)");
                     notification.set_icon (new ThemedIcon ("dialog-question"));
                     app.send_notification (@"question-$session_id", notification);
                 }
@@ -898,11 +944,25 @@ public class MainWindow : Gtk.ApplicationWindow {
         sidebar.set_indicator (session_id, store.status_for (session_id), store.activity_for (session_id));
     }
 
-    /** Refreshes the right-hand inspector when it is on screen. */
+    /** Refreshes the right-hand inspector when it is on screen.
+     *  Coalesced: a turn fires several events per second (usage, tool,
+     *  activity, status) and each one would otherwise re-walk the whole
+     *  conversation and rebuild every row. One refresh per idle round
+     *  is enough, and superseded requests are dropped. */
     private void refresh_panel () {
-        if (session_panel.visible) {
-            session_panel.update ();
+        if (!session_panel.visible) {
+            return;
         }
+        if (panel_source != 0) {
+            return;
+        }
+        panel_source = GLib.Idle.add (() => {
+            panel_source = 0;
+            if (session_panel.visible) {
+                session_panel.update ();
+            }
+            return false;
+        });
     }
 
     /** Loads the counts the panel shows as "context sources". */
@@ -964,7 +1024,19 @@ public class MainWindow : Gtk.ApplicationWindow {
         app.send_notification (@"turn-$session_id", notification);
     }
 
-    private void update_title () {        var session = app.store.active_session;
+    private void update_title () {
+        /* Composing a new session: the header stays empty until the
+         *  session actually starts (open_session clears the flag and
+         *  refreshes the title). Otherwise the previous session's
+         *  title would linger over the hero. */
+        if (composing_new_session) {
+            title_label.label = "";
+            subtitle_label.label = "";
+            subtitle_label.visible = false;
+            composer.set_status_text ("");
+            return;
+        }
+        var session = app.store.active_session;
         if (session == null) {
             title_label.label = "OpenCode";
             subtitle_label.label = "";
@@ -982,7 +1054,7 @@ public class MainWindow : Gtk.ApplicationWindow {
         if (session.agent != "") {
             parts.add (session.agent);
         }
-        var joined = string.joinv (" · ", parts.to_array ());
+        var joined = ListArrays.join (" · ", parts);
         subtitle_label.label = joined;
         subtitle_label.visible = joined != "";
 
@@ -1008,10 +1080,12 @@ public class MainWindow : Gtk.ApplicationWindow {
             composer.set_context (-1.0, "");
             return;
         }
-        composer.set_context (
-            store.context_fraction (store.active_session_id),
-            store.context_label (store.active_session_id)
-        );
+        /* One call resolves the session and the model once for both the
+         *  bar and the label (they used to repeat the same lookups). */
+        double fraction;
+        string label;
+        store.context_info (store.active_session_id, out fraction, out label);
+        composer.set_context (fraction, label);
     }
 
     private void update_choosers () {
@@ -1087,19 +1161,94 @@ public class MainWindow : Gtk.ApplicationWindow {
     }
 
     private async void start_connection () {
-        if (app.config.password == "") {
-            /* First run lands on Settings → Connection, the single
-             * place for host, port and password. */
+        if (!app.config.has_connection) {
+            /* No server to talk to and no manual credentials: land on
+             * Settings → Connection, the single place for both. */
             show_settings ();
             return;
         }
 
         content_stack.visible_child_name = "loading";
-        yield app.store.connect_and_load ();
+        set_loading_label (app.config.manage_server
+            ? @"Starting the app server on port $(app.config.server_port)…"
+            : "Connecting…");
+        if (!yield app.ensure_connected ()) {
+            content_stack.visible_child_name = "offline";
+        }
+    }
+
+    /** The loading page's one line of text, so a slow server start is
+     *  not mistaken for a hung app. */
+    private void set_loading_label (string text) {
+        if (loading_label != null) {
+            loading_label.label = text;
+        }
     }
 
     /** Opens the in-window settings page (T3-style) and reloads its
      *  server-side lists. The chat underneath is untouched. */
+    /** Exports a session to a JSON file chosen through the save
+     *  portal (sandbox-safe). */
+    private async void export_session (string session_id) {
+        string title = session_id;
+        foreach (var session in app.store.sessions) {
+            if (session.id == session_id) {
+                title = session.title;
+                break;
+            }
+        }
+        var text = yield app.store.export_session_text (session_id);
+        if (text == "") {
+            app.store.notice ("Could not export session");
+            return;
+        }
+        var safe = title.strip () != "" ? title.strip () : session_id;
+        /* Keep the suggested filename filesystem-friendly. */
+        string filename;
+        try {
+            filename = new GLib.Regex ("[^A-Za-z0-9._-]+", 0, 0).replace (safe, -1, 0, "-") + ".json";
+        } catch (GLib.RegexError e) {
+            filename = session_id + ".json";
+        }
+        if (yield Portals.save_file (@"Export $title", filename, text)) {
+            app.store.notice ("Session exported");
+        }
+    }
+
+    /** Confirms (once, for the whole batch) and deletes several
+     *  sessions, then leaves selection mode. */
+    private void delete_sessions (Gee.ArrayList<string> session_ids) {
+        if (session_ids.size == 0) {
+            return;
+        }
+        debug ("Bulk delete dialog for %d session(s)", session_ids.size);
+        if (!app.config.confirm_delete) {
+            app.store.delete_sessions.begin (session_ids);
+            sidebar.end_selection ();
+            return;
+        }
+        var dialog = new Gtk.AlertDialog (
+            session_ids.size == 1
+                ? "Delete this session?"
+                : @"Delete $(session_ids.size) sessions?",
+            "The conversations and their context will be permanently removed."
+        );
+        OpenClient.set_alert_buttons (dialog, new string[] { "Cancel", "Delete" });
+        dialog.set_cancel_button (0);
+        dialog.set_default_button (0);
+        dialog.choose.begin (this, null, (obj, res) => {
+            try {
+                var response = dialog.choose.end (res);
+                debug ("Bulk delete dialog response: %d", response);
+                if (response == 1) {
+                    app.store.delete_sessions.begin (session_ids);
+                    sidebar.end_selection ();
+                }
+            } catch (Error e) {
+            }
+        });
+    }
+
     private void show_settings () {
         end_stack.visible_child_name = "settings";
         settings_view.refresh ();
@@ -1142,6 +1291,7 @@ public class MainWindow : Gtk.ApplicationWindow {
          * until the conversation actually starts. */
         composing_new_session = true;
         sidebar.deselect ();
+        update_title ();
         session_panel.set_placeholder ("Session details will appear once the conversation starts.");
         var store = app.store;
         new_session_view.set_models (store.models);

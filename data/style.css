@@ -9,6 +9,40 @@
 
 /* ---------------------------------------------------------------- chat */
 
+@keyframes openclient-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Live arrivals (not history rebuilds — ChatView only tags rows
+ *  appended outside bulk mode) rise in once, 180ms ease-out. */
+.chat-arrive {
+  animation: openclient-rise 180ms ease-out;
+}
+
+/* Popovers open with a short fade-and-settle. If the toolkit does not
+ *  re-run the animation on repeat opens, this degrades to static. */
+@keyframes openclient-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+popover > contents {
+  animation: openclient-pop 120ms ease-out;
+}
+
 .bubble {
   padding: 8px 12px;
   border-radius: 14px;
@@ -124,32 +158,42 @@
 /* --------------------------------------------------------- sidebar */
 
 .navigation-sidebar {
-  background-color: alpha(@borders, 0.08);
-  padding: 6px;
+  background-color: transparent;
+  padding: 0;
 }
 
+/* Compact rows: the theme gives sidebar rows 0.5rem of vertical
+ * padding, and session rows already carry their own margins and two
+ * lines, so that alone made them ~60px tall. Horizontal padding is
+ * inside the row (the background still spans the full pane width). */
 .navigation-sidebar row {
-  border-radius: 10px;
-  margin: 1px 2px;
-  transition: background-color 150ms ease;
+  padding: 2px 8px;
 }
 
-.navigation-sidebar row:selected {
-  background-color: alpha(@accent_color, 0.18);
+/* The theme paints rows inside .sidebar solid (#252525 dark /
+ * #dfdfdf light) when selected — a heavy full-bleed block unlike the
+ * soft tint generic lists use. Match the generic tint so the session
+ * list and the Settings category list select identically, edge to
+ * edge (no radius, same as the theme's own row styling). */
+.sidebar .navigation-sidebar row:selected {
+  background-color: alpha(@theme_fg_color, 0.15);
 }
 
-.navigation-sidebar row:hover:not(:selected) {
-  background-color: alpha(@borders, 0.14);
+/* Bulk ticks are a distinct state, so they keep the accent — same
+ * full-bleed shape as selected and hover. */
+.navigation-sidebar row.bulk-selected,
+.navigation-sidebar row.bulk-selected:hover {
+  background-color: alpha(@accent_color, 0.14);
 }
 
 .sidebar-avatar {
-  border-radius: 10px;
-  background-color: alpha(@accent_color, 0.14);
-  border: 1px solid alpha(@accent_color, 0.22);
+  border-radius: 8px;
+  background-color: alpha(@accent_color, 0.10);
+  border: 1px solid alpha(@accent_color, 0.15);
 }
 
 .sidebar-title {
-  font-weight: bold;
+  font-weight: 600;
   font-size: 0.95em;
 }
 
@@ -160,6 +204,18 @@
   background-color: @accent_color;
   border: 2px solid @bg_color;
   box-shadow: 0 0 0 1px alpha(@accent_color, 0.35);
+  /* Live "needs input" marker breathes while visible (hidden rows
+   *  paint nothing, so this costs zero when idle). */
+  animation: openclient-pulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes openclient-pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.4;
+  }
 }
 
 .session-spinner {
@@ -309,20 +365,6 @@ notebook > header tabs > tab:checked {
   background-color: alpha(@accent_color, 0.18);
 }
 
-.rich-list row {
-  border-radius: 10px;
-  margin: 1px 4px;
-  transition: background-color 150ms ease;
-}
-
-.rich-list row:hover {
-  background-color: alpha(@borders, 0.14);
-}
-
-/* Picker panels (model / agent / variant, and the slash-command
- * list): trim the theme's oversized row min-height so cells read
- * compactly without looking cramped. Scoped to .picker-list so
- * Settings and the diff list keep their roomier rows. */
 .picker-list row {
   min-height: 30px;
   padding: 0;
@@ -342,12 +384,6 @@ notebook > header tabs > tab:checked {
 .settings-title {
   font-size: 1.5em;
   font-weight: bold;
-}
-
-.settings-list,
-.settings-scroll,
-.settings-scroll viewport {
-  background: transparent;
 }
 
 /* ---------------------------------------------------------- spinner */
@@ -378,11 +414,6 @@ dim-label {
 .new-session-input {
   background: none;
   border: none;
-}
-
-.panel-section-title {
-  font-weight: bold;
-  font-size: 0.9em;
 }
 
 .session-panel levelbar trough {
