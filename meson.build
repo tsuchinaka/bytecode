@@ -69,6 +69,7 @@ executable(
   'src/Services/Client.vala',
   'src/Services/EventStream.vala',
   'src/Services/ServerProcess.vala',
+  'src/Services/ServiceWatcher.vala',
   'src/Services/Store.vala',
   'src/Utils/BrailleSpinner.vala',
   'src/Utils/JsonUtil.vala',
