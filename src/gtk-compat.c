@@ -35,7 +35,7 @@
 /* GTK: gtk_alert_dialog_set_buttons (GtkAlertDialog *, const gchar * const *)
  * Vala passes its string arrays with an explicit length and WITHOUT a
  * NULL terminator; GTK reads a NULL-terminated list. Forwarding the raw
- * pointer reads past the end (garbage buttons, wrong response indices —
+ * pointer reads past the end (garbage buttons, wrong response indices:
  * this broke every delete confirm). Copy with a terminator first.
  * The `n_*` parameters are Vala's array lengths. */
 G_MODULE_EXPORT void

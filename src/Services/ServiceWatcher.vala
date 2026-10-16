@@ -4,7 +4,7 @@
  * Read-only tap on the background opencode service (`opencode serve
  * --service`, what terminal CLIs talk to). That server shares the
  * session database with the app's managed server, so session ids
- * match — but each server only broadcasts events to its own SSE
+ * match, but each server only broadcasts events to its own SSE
  * subscribers. Without this tap, turns driven from a terminal never
  * move the sidebar indicators.
  *
@@ -171,7 +171,7 @@ public class ServiceWatcher : GLib.Object {
 
     /** Status/activity subset of the event catalog: enough to move
      *  sidebar indicators and the open-session state for turns the
-     *  terminal drives. Anything content-bearing stays untouched —
+     *  terminal drives. Anything content-bearing stays untouched:
      *  the managed stream owns the conversation. */
     private void on_event (string type, Json.Object data) {
         var session_id = JsonUtil.string_member (data, "sessionID");

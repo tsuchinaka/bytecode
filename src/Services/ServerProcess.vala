@@ -6,7 +6,7 @@
  * The app does not ask the user to start a server and paste its
  * password: it runs its own on a dedicated port with a passcode it
  * generated, so the endpoint is stable across runs and no other client
- * shares it. Spawning is idempotent — a server left behind by an
+ * shares it. Spawning is idempotent: a server left behind by an
  * earlier run (crash, kill, predating die-with-parent) answers to the
  * same passcode and is simply adopted; the app still terminates it on
  * the way out, because it is the app's server. When the port is taken
@@ -15,7 +15,7 @@
  *
  * Crash safety has two layers: servers spawned by this build carry
  * PR_SET_PDEATHSIG=SIGTERM, so the kernel kills them even when the app
- * dies without running shutdown (segfault, SIGKILL) — and any stale
+ * dies without running shutdown (segfault, SIGKILL), and any stale
  * server is adopted and stopped on the next run regardless.
  */
 
@@ -111,7 +111,7 @@ public class ServerProcess : GLib.Object {
         var command = find_command (config.server_command);
         if (command == null) {
             update_state (ServerState.FAILED,
-                @"`$(config.server_command)` not found — set the server command in Settings → Connection");
+                @"`$(config.server_command)` not found. Set the server command in Settings → Connection");
             return false;
         }
 
@@ -164,7 +164,7 @@ public class ServerProcess : GLib.Object {
         /* Only a forked child can be reaped with waitpid; an adopted
          *  server is not ours (ECHILD), so kill(0) is the liveness
          *  check there. A zombie still answers kill(0), so ours must
-         *  be polled with waitpid — which reaps the moment it exits. */
+         *  be polled with waitpid, which reaps the moment it exits. */
         var ours = child_pid > 0;
         if (pid > 0) {
             Posix.kill ((Posix.pid_t) pid, Posix.Signal.TERM);
@@ -206,7 +206,7 @@ public class ServerProcess : GLib.Object {
     }
 
     /** True when a forked child has exited (reaping it). False while it
-     *  is still running — or when it is not our child at all. */
+     *  is still running, or when it is not our child at all. */
     private static bool reaped (int pid) {
         if (pid <= 0) {
             return true;
@@ -320,7 +320,7 @@ public class ServerProcess : GLib.Object {
                 /* It gave up before answering: report why, from its log. */
                 child_pid = 0;
                 update_state (ServerState.FAILED,
-                    @"The server exited during startup — $(log_tail ())");
+                    @"The server exited during startup. $(log_tail ())");
                 return false;
             }
             yield delay (READY_INTERVAL_MS);
@@ -331,7 +331,7 @@ public class ServerProcess : GLib.Object {
         reap (pid);
         child_pid = 0;
         update_state (ServerState.FAILED,
-            @"The server did not answer on port $(config.server_port) within 15s — $(log_tail ())");
+            @"The server did not answer on port $(config.server_port) within 15s. $(log_tail ())");
         return false;
     }
 

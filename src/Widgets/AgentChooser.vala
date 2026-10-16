@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Agent picker — Plan, Build and any other primary agent available
+ * Agent picker: Plan, Build and any other primary agent available
  * from `GET /api/agent`. This is the permissions mode of a session:
  * each agent carries its own permission ruleset. Native GTK popover
  * sized to its content.

@@ -243,7 +243,7 @@ public class Store : GLib.Object {
         stream_reconnected = false;
         stream.connected.connect (() => {
             /* First connect is handled explicitly below; every later
-             * connect means we dropped and came back — the events that
+             * connect means we dropped and came back: the events that
              * were in flight while we were off the stream are gone, so
              * resync the session list and the open conversation. */
             if (!stream_reconnected) {
@@ -963,12 +963,12 @@ public class Store : GLib.Object {
     }
 
     /** Handles session.inbox.enqueued: the canonical source of truth
-     *  for "a user message landed" — including prompts submitted from
+     *  for "a user message landed", including prompts submitted from
      *  the CLI or another client, which the GUI has no other signal
      *  for. The sender's own optimistic echo is swallowed (see
      *  self_echo) so a GUI send renders exactly one bubble. */
     private void on_inbox_enqueued (string session_id, Json.Object data) {
-        /* Swallow this client's own prompt echo first, in event order —
+        /* Swallow this client's own prompt echo first, in event order:
          * for any session, not just the open one (the user may have
          * switched while the POST was in flight). */
         var pending = self_echo.has_key (session_id) ? self_echo[session_id] : 0;
@@ -1220,7 +1220,7 @@ public class Store : GLib.Object {
         forget_sessions (gone);
         notice (failed == 0
             ? @"Deleted $(gone.size) sessions"
-            : @"Deleted $(gone.size) sessions — $(failed) failed");
+            : @"Deleted $(gone.size) sessions, $(failed) failed");
         sessions_changed ();
         /* Reconcile with server truth (see delete_session). */
         try {
@@ -1315,7 +1315,7 @@ public class Store : GLib.Object {
         try {
             yield client.prompt (session_id, text, files);
         } catch (Error e) {
-            /* The server rejected it, so no inbox echo will arrive —
+            /* The server rejected it, so no inbox echo will arrive:
              * drop the count so a later real prompt isn't swallowed. */
             var n = self_echo.has_key (session_id) ? self_echo[session_id] : 0;
             self_echo[session_id] = n > 0 ? n - 1 : 0;
@@ -1666,7 +1666,7 @@ public class Store : GLib.Object {
 
     /** Merges execution status observed on ANOTHER server into the
      *  local status maps. The background service CLI clients use shares
-     *  the session database, so ids match; only status/activity merge —
+     *  the session database, so ids match; only status/activity merge:
      *  messages, tools and actions stay on the managed connection. */
     public void note_remote_status (string session_id, string status, string activity = "") {
         set_status (session_id, status);
@@ -2086,7 +2086,7 @@ public class Store : GLib.Object {
             /* Settle events end the question: the answered/dismissed
              *  form leaves pending_forms so the dock clears and the
              *  session resumes. (There is no `form.settled` on the
-             *  wire — these two are the real events.) */
+             *  wire; these two are the real events.) */
             case "form.replied":
             case "form.cancelled": {
                 var form_id = JsonUtil.string_member (data, "id");

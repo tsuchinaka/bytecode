@@ -2,8 +2,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Main window: two-pane layout following the elementary OS panes
- * pattern — session sidebar on the start side, chat on the end
- * side — with a toast overlay for transient notices.
+ * pattern: session sidebar on the start side, chat on the end
+ * side, with a toast overlay for transient notices.
  */
 
 namespace OpenClient {
@@ -140,7 +140,7 @@ public class MainWindow : Gtk.ApplicationWindow {
             app.store.set_archived (session_id, archived);
         });
 
-        /* The whole start pane shares the theme sidebar background —
+        /* The whole start pane shares the theme sidebar background,
          *  header, list and action bar read as one column instead of
          *  the header floating on window background above it. */
         var start_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0) {
@@ -685,13 +685,13 @@ public class MainWindow : Gtk.ApplicationWindow {
             refresh_panel ();
             /* Opened mid-turn (or the turn outlived the rebuild): the
              * footer goes back up with the line matching the turn's
-             * state — working quips, or what it is waiting on. */
+             * state: working quips, or what it is waiting on. */
             restore_pending_footer ();
             /* Opened mid-turn part two: history lacks the partial
              * reply, the live cache has it. Replay once the incremental
              * rebuild settles so replayed bubbles land last instead of
              * buried mid-history (chat_rebuilt fires from the last
-             * batch — no polling for the rebuild to finish). */
+             * batch (no polling for the rebuild to finish). */
             var replay_id = store.active_session_id;
             if (replay_id != null) {
                 ulong handler = 0;
@@ -794,7 +794,7 @@ public class MainWindow : Gtk.ApplicationWindow {
                 if (running) {
                     /* Instant feedback: the user's bubble is already up
                      * (optimistic echo); the footer with its playful
-                     * line covers the wait — and stays pinned at the
+                     * line covers the wait, and stays pinned at the
                      * bottom for the whole turn, not just until the
                      * first streamed content. */
                     chat_view.show_pending ();
@@ -1279,7 +1279,7 @@ public class MainWindow : Gtk.ApplicationWindow {
      *  Needs a connection; otherwise it detours to Settings. */
     private void show_new_session () {
         if (app.store.client == null) {
-            app.store.notice ("Not connected — check Settings");
+            app.store.notice ("Not connected. Check Settings.");
             show_settings ();
             return;
         }

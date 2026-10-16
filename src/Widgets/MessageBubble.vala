@@ -65,7 +65,7 @@ public class MessageBubble : Gtk.Box {
 
     public MessageBubble (Message message) {
         /* T3-style layout: user turns are distinct right-aligned
-         * blocks, assistant answers are flat full-width text — not
+         * blocks, assistant answers are flat full-width text, not
          * everything needs bubble chrome. Tool cards keep their own
          * card styling inside the flat answer. */
         bool is_user = message.role == MessageRole.USER;
@@ -383,7 +383,7 @@ public class MessageBubble : Gtk.Box {
                 pretty = pretty.substring (0, 90) + "…";
             }
             var pretty_name = live_tool_names.has_key (call_id) ? live_tool_names[call_id] : "Tool";
-            live_last_tool = @"$pretty_name — $pretty";
+            live_last_tool = @"$pretty_name · $pretty";
             live_tools[call_id] = live_last_tool;
             live_phase = "tool";
             refresh_live_status ();

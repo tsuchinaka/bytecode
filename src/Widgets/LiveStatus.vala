@@ -4,7 +4,7 @@
  * One-line live activity for an assistant message, e.g.
  *
  *   ⠋ Figuring out which file to read…
- *   ✓ Read file — src/MainWindow.vala
+ *   ✓ Read file · src/MainWindow.vala
  *
  * Flat (never a bubble) and single-line: while the turn runs it
  * shows what the agent is doing right now with a CLI braille

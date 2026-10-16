@@ -494,7 +494,7 @@ public class Sidebar : Gtk.Box {
 
         /* Selection mode survives a rebuild (search, filter, live rename):
          *  re-apply the checkbox and tick state to the rows on screen, and
-         *  forget sessions that are no longer visible — deleting something
+         *  forget sessions that are no longer visible, since deleting something
          *  the user cannot see would be a surprise. */
         if (selecting) {
             var stale = new Gee.ArrayList<string> ();
@@ -663,7 +663,7 @@ public class Sidebar : Gtk.Box {
             }
         }
         if (active) {
-            /* The row highlight belongs to the checkboxes now — but keep
+            /* The row highlight belongs to the checkboxes now, but keep
              *  the id so leaving selection mode restores it (deselect
              *  clears it). */
             var keep = highlighted_id;
@@ -907,7 +907,7 @@ public class SidebarRow : Granite.ListItem {
     private bool last_pinned = false;
     /** The pin/archive pair the context menu was last built for, or -1
      *  while it has never been built. Without the sentinel a plain
-     *  (unpinned, unarchived) row — the common case — would look
+     *  (unpinned, unarchived) row, the common case, would look
      *  "unchanged" on the first refresh and never get a menu. */
     private int last_menu_state = -1;
 
@@ -1096,7 +1096,7 @@ public class SidebarRow : Granite.ListItem {
     /** Live indicator over the model avatar: a spinner while the model
      *  works, an accent dot while it waits on the user, plus a tooltip
      *  naming the current activity ("Running · Bash", …). While live,
-     *  the activity also replaces the directory subtitle — the video
+     *  the activity also replaces the directory subtitle: the video
      *  shows the working session's current job inline. */
     public void set_indicator (bool spinning, bool attention, string activity) {
         last_spinning = spinning;
@@ -1106,11 +1106,11 @@ public class SidebarRow : Granite.ListItem {
         spinner.spinning = spinning;
         status_dot.visible = !spinning && attention;
         if (activity != "") {
-            tooltip_text = @"$base_title — $activity";
+            tooltip_text = @"$base_title · $activity";
         } else if (spinning) {
-            tooltip_text = @"$base_title — Running";
+            tooltip_text = @"$base_title · Running";
         } else if (attention) {
-            tooltip_text = @"$base_title — Waiting";
+            tooltip_text = @"$base_title · Waiting";
         } else {
             tooltip_text = base_title;
         }
@@ -1160,10 +1160,10 @@ public class SidebarRow : Granite.ListItem {
             pin_icon.visible = session.pinned;
             last_pinned = session.pinned;
         }
-        /* Keep a live activity suffix across refreshes ("Title — Running"). */
-        var dash = tooltip_text.index_of ("—");
-        var next_tip = dash >= 0
-            ? session.title + " " + tooltip_text.substring (dash)
+        /* Keep a live activity suffix across refreshes ("Title · Running"). */
+        var dot = tooltip_text.index_of ("·");
+        var next_tip = dot >= 0
+            ? session.title + " " + tooltip_text.substring (dot)
             : session.title;
         if (next_tip != tooltip_text) {
             tooltip_text = next_tip;

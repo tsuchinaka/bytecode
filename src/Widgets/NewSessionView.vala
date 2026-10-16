@@ -6,7 +6,7 @@
  * section that must be set before sending, the prompt card (Granite's
  * "card" style class), and a Suggestions section of icon buttons. The
  * server fixes a session's directory at creation time, so the folder
- * is required up front — Send stays insensitive until one is set.
+ * is required up front, so Send stays insensitive until one is set.
  */
 
 namespace OpenClient {
@@ -223,7 +223,7 @@ public class NewSessionView : Gtk.Box {
             child = text_view
         };
 
-        /* No ellipsis in placeholder text per hig/reference/text.md —
+        /* No ellipsis in placeholder text per hig/reference/text.md:
          *  it adds no value there. */
         placeholder_label = new Gtk.Label ("Plan, build, or ask (paste or drop images to attach)") {
             xalign = 0,

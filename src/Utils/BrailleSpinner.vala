@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * CLI-style braille spinner (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏), used for thinking,
- * tool execution, compaction and retry states — the same rhythm
+ * tool execution, compaction and retry states, the same rhythm
  * the OpenCode TUI uses.
  *
  * Note: Gtk.Label is final in GTK4, so this is a Box that owns

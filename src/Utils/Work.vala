@@ -6,7 +6,7 @@
  * Runs blocking or CPU-bound work (JSON parsing, disk reads, image
  * decoding, base64) on a small bounded worker pool and resumes the
  * calling coroutine on the main context. Only touch widgets after
- * the coroutine resumes — never inside `submit`.
+ * the coroutine resumes, never inside `submit`.
  */
 
 namespace OpenClient {

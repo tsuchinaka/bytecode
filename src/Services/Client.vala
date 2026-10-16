@@ -773,7 +773,7 @@ public class Client : GLib.Object {
             "/api/session/" + Uri.escape_string (session_id) + "/revert/stage",
             builder.get_root ()
         );
-        /* {data: bool} — a VALUE node, not an object, so read it raw. */
+        /* {data: bool} is a VALUE node, not an object, so read it raw. */
         if (root.get_node_type () != Json.NodeType.OBJECT) {
             return false;
         }

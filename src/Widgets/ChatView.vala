@@ -257,8 +257,8 @@ public class ChatView : Gtk.Box {
     }
 
     /** Keeps the pending footer after every real message, so a
-     *  history rebuild landing mid-turn — or a freshly streamed
-     *  bubble or divider — never buries it mid-list.
+     *  history rebuild landing mid-turn, or a freshly streamed
+     *  bubble or divider, never buries it mid-list.
      *  (Re-append, not reorder: GtkBox treats a NULL sibling as the
      *  first position, which is the wrong end here.) */
     private void pin_pending_last () {
@@ -411,7 +411,7 @@ public class ChatView : Gtk.Box {
 
     /** Freezes every live status line of the finished turn and drops
      *  the footer: the turn is over, so nothing streams anymore.
-     *  Freezes ALL bubbles, not just ones created mid-turn — live
+     *  Freezes ALL bubbles, not just ones created mid-turn: live
      *  events can spin lines on history-loaded bubbles too, and those
      *  must never be left running. */
     public void finish_live () {
@@ -496,7 +496,7 @@ public class ChatView : Gtk.Box {
             return;
         }
         var target = adjustment.upper - adjustment.page_size;
-        /* Already showing the newest line — the common case while a
+        /* Already showing the newest line: the common case while a
          * turn streams, since every delta re-enters this method. Writing
          * the same value again only emits adjustment signals, so the
          * check is what keeps streaming cheap. */

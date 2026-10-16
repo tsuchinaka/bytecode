@@ -3,7 +3,7 @@
  *
  * Right-hand session inspector, OpenChamber-style: context meter,
  * project, model usage, turn stats, subagent runs and context
- * sources — all read from data the app already has (no invented
+ * sources, all read from data the app already has (no invented
  * metrics). Collapsible from the chat header.
  */
 
@@ -134,7 +134,7 @@ public class SessionPanel : Gtk.Box {
         var key_label = new Gtk.Label (key) { xalign = 0, hexpand = true };
         key_label.add_css_class (Granite.CssClass.DIM);
         key_label.add_css_class ("caption");
-        value = new Gtk.Label ("—") { xalign = 1 };
+        value = new Gtk.Label ("None") { xalign = 1 };
         value.add_css_class ("caption");
         box.append (key_label);
         box.append (value);
@@ -316,14 +316,14 @@ public class SessionPanel : Gtk.Box {
             context_label.label = "%.1f%%".printf (fraction * 100.0);
         } else {
             context_bar.value = 0.0;
-            context_label.label = "—";
+            context_label.label = "None";
             last_context_band = "";
         }
 
         /* Project */
         var dir = session.directory;
-        project_label.label = session.directory_name != "" ? session.directory_name : "—";
-        project_path_label.label = dir != "" ? dir : "—";
+        project_label.label = session.directory_name != "" ? session.directory_name : "None";
+        project_path_label.label = dir != "" ? dir : "None";
         project_path_label.tooltip_text = dir;
 
         /* Usage */
@@ -332,7 +332,7 @@ public class SessionPanel : Gtk.Box {
             usage_icon.icon_name = provider_icon;
             last_usage_icon = provider_icon;
         }
-        usage_model_label.label = session.model != "" ? session.model : "—";
+        usage_model_label.label = session.model != "" ? session.model : "None";
         var tokens_line = new StringBuilder ();
         if (session.input_tokens > 0) {
             tokens_line.append (@"◊ $(Store.format_tokens (session.input_tokens)) in");
@@ -350,10 +350,10 @@ public class SessionPanel : Gtk.Box {
         subagents_empty.visible = runs.size == 0;
         update_subagent_rows (runs);
 
-        /* Context sources */
-        sources_skills.label = store.skills_count > 0
-            ? store.skills_count.to_string () : "—";
-        sources_mcp.label = mcp_count > 0 ? mcp_count.to_string () : "0";
+        /* Context sources: both counts read as plain numbers, 0 included,
+         *  so the section does not mix placeholders. */
+        sources_skills.label = store.skills_count.to_string ();
+        sources_mcp.label = mcp_count.to_string ();
     }
 
     /** Diff the subagent list against the rows already on screen: a
@@ -464,18 +464,18 @@ public class SessionPanel : Gtk.Box {
             }
         }
 
-        stat_steps.label = steps > 0 ? steps.to_string () : "—";
+        stat_steps.label = steps > 0 ? steps.to_string () : "None";
         stat_tokens.label = in_tokens + out_tokens > 0
             ? @"$(Store.format_tokens (in_tokens)) ↑ · $(Store.format_tokens (out_tokens)) ↓"
-            : "—";
+            : "None";
         var cache_total = cache_read + cache_write;
         stat_cache.label = cache_total > 0
-            ? @"%.0f%%".printf (100.0 * cache_read / cache_total) : "—";
+            ? @"%.0f%%".printf (100.0 * cache_read / cache_total) : "None";
         stat_elapsed.label = (last_completed > first_created && first_created > 0)
-            ? format_duration (last_completed - first_created) : "—";
-        stat_model_time.label = model_time > 0 ? format_duration (model_time) : "—";
-        stat_tool_time.label = tool_time > 0 ? format_duration (tool_time) : "—";
-        stat_cost.label = cost > 0 ? "$%.4f".printf (cost) : "—";
+            ? format_duration (last_completed - first_created) : "None";
+        stat_model_time.label = model_time > 0 ? format_duration (model_time) : "None";
+        stat_tool_time.label = tool_time > 0 ? format_duration (tool_time) : "None";
+        stat_cost.label = cost > 0 ? "$%.4f".printf (cost) : "None";
     }
 
     private static string format_duration (int64 millis) {

@@ -165,7 +165,7 @@ public class Composer : Gtk.Box {
         };
         append (permission_revealer);
 
-        /* Input card — same elementary "card" look as the new-session
+        /* Input card: same elementary "card" look as the new-session
          * prompt (see NewSessionView): background + shadow from the
          * card class, small corner radius, inner padding. */
         var frame = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);

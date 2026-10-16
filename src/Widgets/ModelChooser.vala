@@ -66,7 +66,7 @@ public class ModelChooser : Gtk.Box {
         var scrolled = new Gtk.ScrolledWindow () {
             hscrollbar_policy = Gtk.PolicyType.NEVER,
             /* Size to content, capped so the panel always fits the
-             * space around its button — a fixed size would either clip
+             * space around its button; a fixed size would either clip
              * or leave dead space. propagate_natural_width keeps the
              * panel as wide as the widest row. */
             propagate_natural_width = true,

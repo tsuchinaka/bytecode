@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * In-window settings page, elementary style: a category sidebar on
- * the start side and one content stack on the end side — no separate
+ * the start side and one content stack on the end side, with no separate
  * window, so context (chat, sidebar, toasts) stays put underneath.
  *
  * Covers local preferences (connection, appearance, behavior,
@@ -171,7 +171,7 @@ public class SettingsView : Gtk.Box {
     }
 
     /** Reloads the server config file and the custom-agents directory
-     *  for outside edits — edited here, in an editor, or via CLI, the
+     *  for outside edits: edited here, in an editor, or via CLI, the
      *  app follows in real time with no polling. */
     private void watch_server_config () {
         var dir = GLib.Path.build_filename (
@@ -299,7 +299,7 @@ public class SettingsView : Gtk.Box {
     }
 
     /* -- page scaffolding (pantheon-tweaks pattern: H2 title with dim
-     *  subtitle, then flat rows — a HeaderLabel carrying title plus
+     *  subtitle, then flat rows: a HeaderLabel carrying title plus
      *  description with the control at the end. No cards; the side
      *  margins live on the content container, not on every row.) -- */
 
@@ -433,7 +433,7 @@ public class SettingsView : Gtk.Box {
         service_watch_label.add_css_class ("caption");
 
         /* Credentials: one label-plus-entry row each (entries validate
-         *  inline — Granite marks bad input with an error icon as you
+         *  inline: Granite marks bad input with an error icon as you
          *  type). */
         GLib.Regex? host_regex = null;
         GLib.Regex? port_regex = null;
@@ -680,7 +680,7 @@ public class SettingsView : Gtk.Box {
         } else {
             set_status (false, "Unreachable",
                 use_managed
-                    ? @"Nothing answered on $(probe.base_url) — press Apply & Restart Server"
+                    ? @"Nothing answered on $(probe.base_url). Press Apply & Restart Server"
                     : @"Could not reach $(probe.base_url)");
         }
         update_connection_status ();

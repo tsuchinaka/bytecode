@@ -20,7 +20,7 @@
   }
 }
 
-/* Live arrivals (not history rebuilds — ChatView only tags rows
+/* Live arrivals (not history rebuilds: ChatView only tags rows
  *  appended outside bulk mode) rise in once, 180ms ease-out. */
 .chat-arrive {
   animation: openclient-rise 180ms ease-out;
@@ -55,7 +55,7 @@ popover > contents {
 }
 
 /* Assistant answers are flat full-width text (T3-style), not bubbles:
- * no background, no border — tool cards keep their own chrome. */
+ * no background, no border; tool cards keep their own chrome. */
 .assistant-bubble {
   background: none;
   border: none;
@@ -171,7 +171,7 @@ popover > contents {
 }
 
 /* The theme paints rows inside .sidebar solid (#252525 dark /
- * #dfdfdf light) when selected — a heavy full-bleed block unlike the
+ * #dfdfdf light) when selected, a heavy full-bleed block unlike the
  * soft tint generic lists use. Match the generic tint so the session
  * list and the Settings category list select identically, edge to
  * edge (no radius, same as the theme's own row styling). */
@@ -179,7 +179,7 @@ popover > contents {
   background-color: alpha(@theme_fg_color, 0.15);
 }
 
-/* Bulk ticks are a distinct state, so they keep the accent — same
+/* Bulk ticks are a distinct state, so they keep the accent, the same
  * full-bleed shape as selected and hover. */
 .navigation-sidebar row.bulk-selected,
 .navigation-sidebar row.bulk-selected:hover {
