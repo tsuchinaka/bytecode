@@ -5,7 +5,7 @@ Name=OpenCode Client
 GenericName=AI Coding Agent
 Comment=A native client for OpenCode
 Comment[es]=Cliente nativo para OpenCode
-Exec=/home/haruki/.local/bin/io.github.haruki.openclient
+Exec=io.github.haruki.openclient
 Icon=io.github.haruki.openclient
 DBusActivatable=false
 StartupNotify=true
@@ -20,4 +20,4 @@ Actions=NewSession;
 [Desktop Action NewSession]
 Name=New Session
 Name[es]=Nueva sesión
-Exec=/home/haruki/.local/bin/io.github.haruki.openclient --new-session
+Exec=io.github.haruki.openclient --new-session

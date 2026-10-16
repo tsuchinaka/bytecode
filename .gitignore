@@ -1,3 +1,5 @@
 build/
-*.c
-*.h
+
+# valac-generated C next to each .vala source
+*.vala.c
+*.vala.h
