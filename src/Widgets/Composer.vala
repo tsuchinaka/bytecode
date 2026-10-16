@@ -1,14 +1,13 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The conversation input: multiline entry, attachment chips, inline
- * slash-command list, changed-files chip, context meter, model and
+ * Prompt composer: agent question dock, permission banner,
+ * attachment chips, multiline entry, context meter, model and
  * agent pickers, stop and send buttons.
  *
  * Attachments arrive via clipboard paste (Ctrl+V with an image) or
  * file drag-and-drop. They are staged as files and sent as
- * `file://` prompt attachments. Any file type is accepted; images
- * get a preview, everything else a named chip.
+ * `file://` prompt attachments.
  */
 
 namespace OpenClient {
@@ -26,7 +25,7 @@ public class Attachment : GLib.Object {
 
     public FileAttachment to_file_attachment () {
         return new FileAttachment () {
-            uri = this.uri,
+            uri = uri,
             name = name,
             mime = mime
         };
@@ -35,253 +34,88 @@ public class Attachment : GLib.Object {
 
 public class Composer : Gtk.Box {
     public signal void send_requested (string text, Gee.ArrayList<FileAttachment> files);
-    public signal void command_requested (string name, string text);
+    public signal void stop_requested ();
     public signal void permission_decision (string request_id, string decision);
     public signal void form_answered (string form_id, Json.Node answer);
     public signal void form_cancelled (string form_id);
+    public signal void command_requested (string name, string text);
+    public signal void permission_mode_changed (string mode);
 
-    private Gtk.Overlay overlay;
+    public ModelChooser model_chooser { get; private set; }
+    public AgentChooser agent_chooser { get; private set; }
+    public VariantChooser variant_chooser { get; private set; }
+    /** When true, Enter makes a new line and Ctrl+Enter sends. */
+    public bool ctrl_enter_to_send { get; set; default = false; }
+
     private Gtk.TextView text_view;
-    private Gtk.Box buttons;
-    private Gtk.Label status_label;
-    private Gtk.Button stop_button;
+    private Gtk.Label placeholder_label;
     private Gtk.Button send_button;
+    private Gtk.Button stop_button;
     private Gtk.Button attach_button;
-    private Gtk.Box context_row;
-    private Gtk.LevelBar context_level;
-    private Gtk.Label context_label;
-    private Gtk.Label context_status;
-    private Gtk.FlowBox attachments_box;
-    private Gtk.Revealer attachments_revealer;
-    private Gee.ArrayList<Attachment> attachments;
+    private Gtk.Label status_label;
     private Gtk.MenuButton diff_button;
-    private Gtk.Box diff_row;
-    private Gtk.Label diff_editing_label;
-    private Gtk.Spinner diff_chip_spinner;
+    private Gtk.Box? diff_row = null;
+    private Gtk.Label? diff_editing_label = null;
+    private Gtk.Box diff_list_box;
     private Gtk.Label diff_chip_add;
     private Gtk.Label diff_chip_del;
     private Gtk.Label diff_chip_count;
-    private Gtk.Box diff_list_box;
-    private Gtk.Revealer command_revealer;
-    private Gtk.ListBox command_list;
-    public AgentChooser agent_chooser;
-    public ModelChooser model_chooser;
-    public VariantChooser variant_chooser;
-    private Gtk.Revealer form_revealer;
-    private FormCard form_card;
-    private Gtk.Revealer permission_revealer;
-    private Gtk.Box permission_box;
-    private Gtk.Label permission_label;
-    private string permission_request_id = "";
+    private Gtk.Spinner diff_chip_spinner;
     private Gtk.Button permission_mode_button;
     private string permission_mode = "ask";
     private BrailleSpinner busy_spinner;
-
-    /** Commands offered by the slash-command list: server commands
-     *  plus the built-ins. */
-    private Gee.ArrayList<CommandInfo> commands = new Gee.ArrayList<CommandInfo> ();
+    private Gtk.Revealer command_revealer;
+    private Gtk.ListBox command_list;
     /** True while the inline command list is showing. */
     private bool commands_shown = false;
-    /** Last query the command list was built for; null means "never
-     *  built". */
+    private Gee.ArrayList<CommandInfo> commands;
+    private Gtk.LevelBar context_bar;
+    private Gtk.Label context_label;
+    private Gtk.Box context_row;
+
+    private Gtk.Revealer permission_revealer;
+    private Gtk.Label permission_label;
+    private string permission_request_id = "";
+
+    private Gtk.Revealer form_revealer;
+    private FormCard form_card;
+
+    private Gtk.Revealer attachments_revealer;
+    private Gtk.FlowBox attachments_box;
+    private Gee.ArrayList<Attachment> attachments;
+    /** Decoded 64px attachment thumbnails, keyed by file path, so
+     *  re-listing the chips doesn't re-decode every image. */
+    private Gee.HashMap<string, Gdk.Pixbuf?> thumbnail_cache;
+    /** Last query the command list was built for, so typing that does
+     *  not change it does not rebuild the rows. Null means "never
+     *  built": the old sentinel started with NUL and was therefore the
+     *  empty string, which made the first "/" (an empty query) look
+     *  already built and show no list. */
     private string? last_command_query = null;
-
-    /** Send with Ctrl+Enter instead of plain Enter. Construct-only so
-     *  the window can bake it in at creation time. */
-    public bool ctrl_enter_to_send { get; set; default = false; }
-
-    public signal void stop_requested ();
-    public signal void permission_mode_changed (string mode);
+    /** Last meter value/band/label written, so repeated usage events
+     *  with the same numbers don't invalidate layout. */
+    private double last_context_value = -1.0;
+    private string last_context_band = "";
+    private string last_context_label = "\x00sentinel";
 
     public Composer () {
         Object (
             orientation: Gtk.Orientation.VERTICAL,
-            spacing: 6,
-            halign: Gtk.Align.FILL,
-            hexpand: true
+            spacing: 6
         );
-        add_css_class ("composer-card");
+        margin_top = 10;
+        margin_bottom = 12;
+        margin_start = 12;
+        margin_end = 12;
 
         attachments = new Gee.ArrayList<Attachment> ();
+        thumbnail_cache = new Gee.HashMap<string, Gdk.Pixbuf?> ();
 
-        build_input ();
-        build_toolbar ();
-        build_commands ();
-        build_diff_row ();
-        build_context ();
-        build_attachments ();
-        build_permission_form ();
+        commands = new Gee.ArrayList<CommandInfo> ();
+        commands.add (new CommandInfo () { name = "compact", description = "Compact the session context", builtin = true });
+        commands.add (new CommandInfo () { name = "new", description = "Create a new session", builtin = true });
 
-        append (attachments_revealer);
-        append (command_revealer);
-        append (form_revealer);
-        append (diff_row);
-        append (overlay);
-        append (context_row);
-        append (permission_revealer);
-        append (buttons);
-    }
-
-    /* -- input --------------------------------------------------- */
-
-    private void build_input () {
-        var scroller = new Gtk.ScrolledWindow () {
-            hscrollbar_policy = Gtk.PolicyType.NEVER,
-            propagate_natural_height = true,
-            min_content_height = 48,
-            max_content_height = 150
-        };
-        text_view = new Gtk.TextView () {
-            wrap_mode = Gtk.WrapMode.WORD_CHAR,
-            top_margin = 10,
-            bottom_margin = 10,
-            left_margin = 12,
-            right_margin = 12,
-            hexpand = true,
-            valign = Gtk.Align.START
-        };
-        text_view.add_css_class ("composer-entry");
-        var placeholder = new Gtk.Label ("Write a message…") {
-            xalign = 0,
-            halign = Gtk.Align.START
-        };
-        placeholder.add_css_class (Granite.CssClass.DIM);
-        overlay = new Gtk.Overlay ();
-        overlay.set_child (scroller);
-        overlay.add_overlay (placeholder);
-        scroller.set_child (text_view);
-
-        text_view.buffer.changed.connect (() => {
-            placeholder.visible = text_view.buffer.get_char_count () == 0;
-            update_command_list ();
-            update_send_state ();
-        });
-
-        /* Capture phase so our Ctrl+V image handling runs before the
-         *  TextView's built-in paste, which would otherwise insert the
-         *  file URI as plain text. */
-        var key_controller = new Gtk.EventControllerKey ();
-        key_controller.set_propagation_phase (Gtk.PropagationPhase.CAPTURE);
-        key_controller.key_pressed.connect ((keyval, keycode, state) => {
-            var control = (state & Gdk.ModifierType.CONTROL_MASK) != 0;
-            if (control && (keyval == Gdk.Key.v || keyval == Gdk.Key.V)) {
-                if (try_paste_image ()) {
-                    return true;
-                }
-                return false;
-            }
-
-            if (commands_shown) {
-                if (keyval == Gdk.Key.Escape) {
-                    hide_commands ();
-                    return true;
-                }
-                if (keyval == Gdk.Key.Down || keyval == Gdk.Key.Up) {
-                    move_command_selection (keyval == Gdk.Key.Down);
-                    return true;
-                }
-                if (keyval == Gdk.Key.Return || keyval == Gdk.Key.KP_Enter || keyval == Gdk.Key.Tab) {
-                    run_selected_command ();
-                    return true;
-                }
-            }
-
-            if (keyval == Gdk.Key.Return || keyval == Gdk.Key.KP_Enter) {
-                var ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0;
-                var shift = (state & Gdk.ModifierType.SHIFT_MASK) != 0;
-                if (ctrl_enter_to_send ? ctrl && !shift : !shift) {
-                    request_send ();
-                    return true;
-                }
-            }
-            return false;
-        });
-        text_view.add_controller (key_controller);
-    }
-
-    private void build_toolbar () {
-        buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-        buttons.add_css_class ("composer-toolbar");
-
-        permission_mode_button = new Gtk.Button.with_label ("Always ask") {
-            valign = Gtk.Align.CENTER
-        };
-        permission_mode_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-        permission_mode_button.clicked.connect (cycle_permission_mode);
-
-        agent_chooser = new AgentChooser ();
-        model_chooser = new ModelChooser ();
-        variant_chooser = new VariantChooser ();
-        busy_spinner = new BrailleSpinner ();
-        status_label = new Gtk.Label ("") {
-            xalign = 0,
-            halign = Gtk.Align.START
-        };
-        status_label.add_css_class (Granite.CssClass.DIM);
-        status_label.add_css_class ("composer-status");
-
-        attach_button = new Gtk.Button.from_icon_name ("mail-attachment-symbolic") {
-            tooltip_text = "Attach files (or paste and drop them here)",
-            valign = Gtk.Align.CENTER
-        };
-        attach_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-        attach_button.clicked.connect (open_attach_dialog);
-
-        stop_button = new Gtk.Button.from_icon_name ("media-playback-stop-symbolic") {
-            tooltip_text = "Stop",
-            valign = Gtk.Align.CENTER,
-            visible = false
-        };
-        stop_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-        stop_button.clicked.connect (() => {
-            stop_requested ();
-        });
-
-        send_button = new Gtk.Button.with_label ("Send") {
-            valign = Gtk.Align.CENTER,
-            sensitive = false
-        };
-        send_button.add_css_class ("suggested-action");
-        send_button.clicked.connect (request_send);
-
-        buttons.append (permission_mode_button);
-        buttons.append (agent_chooser);
-        buttons.append (model_chooser);
-        buttons.append (variant_chooser);
-        buttons.append (busy_spinner);
-        buttons.append (status_label);
-        buttons.append (attach_button);
-        buttons.append (stop_button);
-        buttons.append (send_button);
-    }
-
-    /* -- attachments ------------------------------------------- */
-
-    private void build_attachments () {
-        attachments_box = new Gtk.FlowBox () {
-            column_spacing = 6,
-            row_spacing = 6,
-            homogeneous = false,
-            selection_mode = Gtk.SelectionMode.NONE,
-            visible = false
-        };
-        attachments_revealer = new Gtk.Revealer () {
-            child = attachments_box,
-            transition_type = Gtk.RevealerTransitionType.SLIDE_DOWN,
-            reveal_child = false
-        };
-    }
-
-    public void set_context (double fraction, string label) {
-        context_level.value = fraction;
-        context_label.label = label;
-    }
-
-    public void set_context_status (string text) {
-        context_status.label = text;
-    }
-
-    private void build_permission_form () {
+        /* Agent question dock */
         form_card = new FormCard ();
         form_card.submitted.connect ((form_id, answer) => {
             form_answered (form_id, answer);
@@ -294,8 +128,10 @@ public class Composer : Gtk.Box {
             transition_type = Gtk.RevealerTransitionType.SLIDE_DOWN,
             reveal_child = false
         };
+        append (form_revealer);
 
-        permission_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
+        /* Permission request banner */
+        var permission_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8);
         permission_box.add_css_class (Granite.CssClass.CARD);
         permission_box.add_css_class ("permission-banner");
         permission_box.margin_bottom = 6;
@@ -305,6 +141,7 @@ public class Composer : Gtk.Box {
             valign = Gtk.Align.CENTER,
             margin_start = 10
         };
+
         permission_label = new Gtk.Label ("") {
             xalign = 0,
             wrap = true,
@@ -336,215 +173,288 @@ public class Composer : Gtk.Box {
             transition_type = Gtk.RevealerTransitionType.SLIDE_DOWN,
             reveal_child = false
         };
-    }
+        append (permission_revealer);
 
-    public void show_permission (string request_id, string description) {
-        permission_request_id = request_id;
-        permission_label.label = @"Permission requested: $description";
-        permission_revealer.reveal_child = true;
-    }
+        /* Input card: same elementary "card" look as the new-session
+         * prompt (see NewSessionView): background + shadow from the
+         * card class, small corner radius, inner padding. */
+        var frame = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
+        frame.add_css_class (Granite.CssClass.CARD);
+        frame.add_css_class ("rounded");
+        frame.add_css_class ("composer-card");
 
-    public void hide_permission () {
-        permission_request_id = "";
-        permission_revealer.reveal_child = false;
-    }
+        attachments_box = new Gtk.FlowBox () {
+            column_spacing = 8,
+            row_spacing = 8,
+            homogeneous = false,
+            selection_mode = Gtk.SelectionMode.NONE,
+            margin_top = 8,
+            margin_start = 12,
+            margin_end = 12
+        };
+        attachments_revealer = new Gtk.Revealer () {
+            child = attachments_box,
+            transition_type = Gtk.RevealerTransitionType.SLIDE_DOWN,
+            reveal_child = false
+        };
+        frame.append (attachments_revealer);
 
-    private void decide_permission (string decision) {
-        if (permission_request_id == "") {
-            return;
-        }
-        permission_decision (permission_request_id, decision);
-        hide_permission ();
-    }
+        /* Changed files, right above the input it belongs to: the chip
+         *  summarises the session and names the file being written. */
+        diff_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
+            margin_start = 12,
+            margin_end = 12,
+            margin_top = 8,
+            visible = false
+        };
+        diff_editing_label = new Gtk.Label ("") {
+            xalign = 0,
+            ellipsize = Pango.EllipsizeMode.MIDDLE,
+            visible = false,
+            hexpand = true
+        };
+        diff_editing_label.add_css_class (Granite.CssClass.DIM);
+        diff_editing_label.add_css_class ("caption");
+        diff_row.append (diff_editing_label);
+        frame.append (diff_row);
 
-    public void show_form (FormInfo form) {
-        form_card.set_form (form);
-        form_revealer.reveal_child = true;
-    }
+        text_view = new Gtk.TextView () {
+            wrap_mode = Gtk.WrapMode.WORD_CHAR,
+            top_margin = 10,
+            bottom_margin = 10,
+            left_margin = 14,
+            right_margin = 14,
+            accepts_tab = false
+        };
+        text_view.add_css_class ("composer-entry");
 
-    public void hide_form () {
-        form_revealer.reveal_child = false;
-    }
+        /* Content-aware height: one line by default, growing with the
+         * text up to a few lines, then scrolling instead of eating the
+         * whole chat. */
+        var input_scrolled = new Gtk.ScrolledWindow () {
+            hscrollbar_policy = Gtk.PolicyType.NEVER,
+            vscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
+            propagate_natural_height = true,
+            min_content_height = 48,
+            max_content_height = 150,
+            child = text_view
+        };
 
-    private void rebuild_attachment_chips () {
-        Gtk.Widget? child = attachments_box.get_first_child ();
-        while (child != null) {
-            var next = child.get_next_sibling ();
-            attachments_box.remove (child);
-            child = next;
-        }
-        foreach (var attachment in attachments) {
-            var chip = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
-            chip.add_css_class ("attachment-chip");
-            var icon = new Gtk.Image.from_icon_name (
-                attachment.mime.has_prefix ("image/") ? "image-x-generic" : "text-x-generic"
-            ) {
-                pixel_size = 16
-            };
-            var label = new Gtk.Label (attachment.name) {
-                xalign = 0,
-                ellipsize = Pango.EllipsizeMode.MIDDLE,
-                max_width_chars = 28
-            };
-            chip.append (icon);
-            chip.append (label);
-            chip.tooltip_text = attachment.uri;
-            var captured = attachment;
-            var close = new Gtk.Button.from_icon_name ("window-close-symbolic") {
-                valign = Gtk.Align.CENTER
-            };
-            close.add_css_class (Granite.STYLE_CLASS_FLAT);
-            close.clicked.connect (() => {
-                attachments.remove (captured);
-                rebuild_attachment_chips ();
-            });
-            chip.append (close);
-            attachments_box.append (chip);
-        }
-        attachments_revealer.reveal_child = attachments.size > 0;
-    }
+        placeholder_label = new Gtk.Label ("Send a message") {
+            xalign = 0,
+            yalign = 0,
+            halign = Gtk.Align.START,
+            valign = Gtk.Align.START,
+            margin_top = 10,
+            margin_start = 14,
+            can_target = false
+        };
+        placeholder_label.add_css_class (Granite.CssClass.DIM);
 
-    private void clear_attachments () {
-        attachments.clear ();
-        rebuild_attachment_chips ();
-    }
+        text_view.buffer.changed.connect (() => {
+            placeholder_label.visible = text_view.buffer.get_char_count () == 0;
+            update_command_popup ();
+        });
 
-    private void open_attach_dialog () {
-        var dialog = new Gtk.FileChooserNative (
-            "Attach files",
-            null,
-            Gtk.FileChooserAction.OPEN,
-            "_Attach",
-            "_Cancel"
-        );
-        dialog.set_select_multiple (true);
-        dialog.show ();
-        dialog.response.connect ((d, response) => {
-            if (response == Gtk.ResponseType.ACCEPT) {
-                var files = dialog.get_files ();
-                for (uint i = 0; i < files.get_n_items (); i++) {
-                    var file = files.get_item (i) as GLib.File;
-                    if (file != null) {
-                        attach_file (file);
-                    }
+        var overlay = new Gtk.Overlay () {
+            child = input_scrolled,
+            hexpand = true
+        };
+        overlay.add_overlay (placeholder_label);
+
+        /* Capture phase so our Ctrl+V image handling runs before the
+         * TextView's built-in paste, which would otherwise insert the
+         * file URI as plain text. */
+        var key_controller = new Gtk.EventControllerKey ();
+        key_controller.set_propagation_phase (Gtk.PropagationPhase.CAPTURE);
+        key_controller.key_pressed.connect ((keyval, keycode, state) => {
+            var control = (state & Gdk.ModifierType.CONTROL_MASK) != 0;
+            if (control && (keyval == Gdk.Key.v || keyval == Gdk.Key.V)) {
+                if (try_paste_image ()) {
+                    return true;
+                }
+                return false;
+            }
+
+            /* Slash-command popup keyboard handling. */
+            if (commands_shown) {
+                if (keyval == Gdk.Key.Escape) {
+                    hide_commands ();
+                    return true;
+                }
+                if (keyval == Gdk.Key.Down || keyval == Gdk.Key.Up) {
+                    move_command_selection (keyval == Gdk.Key.Down);
+                    return true;
+                }
+                if (keyval == Gdk.Key.Return || keyval == Gdk.Key.KP_Enter || keyval == Gdk.Key.Tab) {
+                    run_selected_command ();
+                    return true;
                 }
             }
-            d.destroy ();
-        });
-    }
 
-    private void attach_file (GLib.File file) {
-        Work.submit (() => {
-            string? mime = null;
-            try {
-                var info = file.query_info ("standard::content-type", GLib.FileQueryInfoFlags.NONE);
-                mime = info.get_content_type ();
-            } catch (Error e) {
-                warning ("Could not read %s: %s", file.get_path (), e.message);
+            if (keyval == Gdk.Key.Return || keyval == Gdk.Key.KP_Enter) {
+                var ctrl = (state & Gdk.ModifierType.CONTROL_MASK) != 0;
+                var shift = (state & Gdk.ModifierType.SHIFT_MASK) != 0;
+                if (ctrl_enter_to_send ? ctrl && !shift : !shift) {
+                    request_send ();
+                    return true;
+                }
             }
-            if (mime == null || mime == "inode/directory") {
-                return;
-            }
-            var attachment = new Attachment () {
-                path = file.get_path (),
-                name = file.get_basename (),
-                mime = mime
-            };
-            Idle.add (() => {
-                attachments.add (attachment);
-                rebuild_attachment_chips ();
-                return false;
-            });
-        });
-    }
-
-    private void attach_texture (Gdk.Texture texture, string name) {
-        var dir = GLib.Path.build_filename (GLib.Environment.get_user_cache_dir (), "opencode-client", "paste");
-        var stamp = GLib.get_real_time ().to_string ();
-        var path = GLib.Path.build_filename (dir, @"image-$stamp.png");
-
-        var bytes = texture.save_to_png_bytes ();
-        Work.submit (() => {
-            try {
-                GLib.DirUtils.create_with_parents (dir, 448);
-                GLib.FileUtils.set_data (path, bytes.get_data ());
-            } catch (Error e) {
-                warning ("Could not save pasted image: %s", e.message);
-                return;
-            }
-            Idle.add (() => {
-                attachments.add (new Attachment () {
-                    path = path,
-                    name = name,
-                    mime = "image/png"
-                });
-                rebuild_attachment_chips ();
-                return false;
-            });
-        });
-    }
-
-    private bool try_paste_image () {
-        var clipboard = text_view.get_clipboard ();
-        var formats = clipboard.get_formats ();
-        if (formats == null) {
             return false;
-        }
-        if (formats.contain_gtype (typeof (Gdk.Texture))) {
-            clipboard.read_texture_async.begin (null, (obj, res) => {
-                try {
-                    var texture = clipboard.read_texture_async.end (res);
-                    if (texture != null) {
-                        attach_texture (texture, "pasted-image.png");
-                    }
-                } catch (Error e) {
-                    warning ("Paste failed: %s", e.message);
-                }
-            });
-            return true;
-        }
-        if (formats.contain_gtype (typeof (Gdk.FileList))) {
-            clipboard.read_value_async.begin (typeof (Gdk.FileList), GLib.Priority.DEFAULT, null, (obj, res) => {
-                try {
-                    unowned GLib.Value? value = clipboard.read_value_async.end (res);
-                    var list = value as Gdk.FileList;
-                    if (list == null) {
-                        return;
-                    }
-                    foreach (var file in list.get_files ()) {
-                        attach_file (file);
-                    }
-                } catch (Error e) {
-                    warning ("Paste files failed: %s", e.message);
-                }
-            });
-            return true;
-        }
-        if (formats.contain_mime_type ("text/uri-list")) {
-            read_clipboard_uri_list.begin (clipboard);
-            return true;
-        }
-        return false;
-    }
+        });
+        text_view.add_controller (key_controller);
 
-    private async void read_clipboard_uri_list (Gdk.Clipboard clipboard) {
-        try {
-            var stream = yield OpenClient.clipboard_read_stream (clipboard, "text/uri-list");
-            if (stream != null) {
-                ingest_uri_list (stream);
-            }
-        } catch (Error e) {
-            warning ("Paste URI list failed: %s", e.message);
+        var drop_target = new Gtk.DropTarget (typeof (Gdk.FileList), Gdk.DragAction.COPY);
+        drop_target.drop.connect ((value, x, y) => on_files_dropped (value));
+        text_view.add_controller (drop_target);
+
+        /* Context meter: a slim line under the input, with its reading
+         *  as a quiet caption rather than a heavy bar across the card. */
+        context_bar = new Gtk.LevelBar.for_interval (0.0, 1.0) {
+            hexpand = true,
+            valign = Gtk.Align.CENTER
+        };
+        context_label = new Gtk.Label ("") {
+            xalign = 1,
+            valign = Gtk.Align.CENTER
+        };
+        context_label.add_css_class (Granite.CssClass.DIM);
+        context_label.add_css_class ("caption");
+        context_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
+            margin_start = 12,
+            margin_end = 12,
+            margin_top = 4,
+            margin_bottom = 2,
+            visible = false
+        };
+        context_row.add_css_class ("composer-context");
+        context_row.append (context_bar);
+        context_row.append (context_label);
+
+        /* Bottom row: choosers, status, actions */
+        agent_chooser = new AgentChooser ();
+        model_chooser = new ModelChooser ();
+        variant_chooser = new VariantChooser ();
+
+        busy_spinner = new BrailleSpinner ();
+
+        status_label = new Gtk.Label ("") {
+            xalign = 0,
+            ellipsize = Pango.EllipsizeMode.END,
+            max_width_chars = 42,
+            hexpand = true
+        };
+        status_label.add_css_class (Granite.CssClass.DIM);
+        status_label.add_css_class ("caption");
+        status_label.add_css_class ("composer-status");
+
+        /* Changed-files chip: sits directly above the input and opens
+         *  the list of files the agent has touched (one row per path),
+         *  with a spinner on anything being written right now. */
+        diff_button = new Gtk.MenuButton () {
+            valign = Gtk.Align.CENTER,
+            tooltip_text = "Files changed in this session"
+        };
+        diff_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+
+        var diff_chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            valign = Gtk.Align.CENTER
+        };
+        diff_chip_box.add_css_class ("diff-chip");
+        diff_chip_spinner = new Gtk.Spinner () {
+            visible = false,
+            tooltip_text = "Editing a file"
+        };
+        /* Same colouring as every other diff readout in the app, and a
+         *  count of zero stays out of the way instead of reading
+         *  "+5 −0". */
+        diff_chip_add = chip_count ("diff-add");
+        diff_chip_del = chip_count ("diff-del");
+        diff_chip_count = new Gtk.Label ("") {
+            valign = Gtk.Align.CENTER,
+            margin_start = 2
+        };
+        diff_chip_count.add_css_class (Granite.CssClass.DIM);
+        diff_chip_count.add_css_class ("caption");
+        diff_chip_box.append (diff_chip_spinner);
+        diff_chip_box.append (diff_chip_add);
+        diff_chip_box.append (diff_chip_del);
+        diff_chip_box.append (diff_chip_count);
+        diff_button.child = diff_chip_box;
+
+        diff_list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+        var diff_scrolled = new Gtk.ScrolledWindow () {
+            hscrollbar_policy = Gtk.PolicyType.NEVER,
+            propagate_natural_width = true,
+            /* Without this the scroller asks for the child's minimum
+             *  height, which for a stack of rows is a sliver: the
+             *  popover came out ~50px tall and the rows spilled out of
+             *  it. Natural height takes the rows up to the cap. */
+            propagate_natural_height = true,
+            child = diff_list_box
+        };
+        var diff_popover = new Gtk.Popover () {
+            child = diff_scrolled
+        };
+        OpenClient.set_menu_popover (diff_button, diff_popover);
+
+        /* The row is built before this button exists (it has to sit
+         *  above the input), so the button joins it here. Appending it
+         *  while it was still null silently dropped the chip: the row
+         *  showed the edited file's name with nothing to open. */
+        if (diff_row != null) {
+            diff_row.prepend (diff_button);
         }
-    }
 
-    private void ingest_uri_list (GLib.InputStream stream) {
-        // uri-list ingestion is handled by read_clipboard_uri_list above
-    }
+        attach_button = new Gtk.Button.from_icon_name ("mail-attachment-symbolic") {
+            tooltip_text = "Attach files (or paste and drop them here)",
+            valign = Gtk.Align.CENTER
+        };
+        attach_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+        attach_button.clicked.connect (() => pick_images ());
 
-    /* -- commands ---------------------------------------------- */
+        stop_button = new Gtk.Button.from_icon_name ("media-playback-stop") {
+            tooltip_text = "Stop",
+            visible = false,
+            valign = Gtk.Align.CENTER
+        };
+        stop_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+        stop_button.clicked.connect (() => stop_requested ());
 
-    private void build_commands () {
+        send_button = new Gtk.Button.from_icon_name ("mail-send") {
+            tooltip_text = "Send (Enter)",
+            valign = Gtk.Align.CENTER
+        };
+        send_button.add_css_class ("suggested-action");
+        send_button.clicked.connect (() => request_send ());
+
+        permission_mode_button = new Gtk.Button () {
+            tooltip_text = "Permission mode (click to cycle)",
+            valign = Gtk.Align.CENTER
+        };
+        permission_mode_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+        permission_mode_button.add_css_class ("composer-chip");
+        permission_mode_button.clicked.connect (() => cycle_permission_mode ());
+        update_permission_mode_button ();
+
+        var buttons = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
+            margin_start = 8,
+            margin_end = 8,
+            margin_bottom = 8
+        };
+        buttons.append (permission_mode_button);
+        buttons.append (agent_chooser);
+        buttons.append (model_chooser);
+        buttons.append (variant_chooser);
+        buttons.append (busy_spinner);
+        buttons.append (status_label);
+        buttons.append (attach_button);
+        buttons.append (stop_button);
+        buttons.append (send_button);
+
+        /* Inline slash-command list: it lives in the card, right above
+         *  the input being typed into, instead of floating over the
+         *  conversation as a popup. */
         command_list = new Gtk.ListBox () {
             selection_mode = Gtk.SelectionMode.SINGLE
         };
@@ -570,25 +480,43 @@ public class Composer : Gtk.Box {
             margin_end = 12,
             margin_bottom = 6
         };
+
+        frame.append (command_revealer);
+        frame.append (overlay);
+        frame.append (context_row);
+        frame.append (buttons);
+        append (frame);
     }
 
     public void set_server_commands (Gee.ArrayList<CommandInfo> server_commands) {
-        commands.clear ();
-        commands.add_all (server_commands);
-        commands.add (new CommandInfo () { name = "compact", description = "Compact the session context", builtin = true });
-        commands.add (new CommandInfo () { name = "new", description = "Create a new session", builtin = true });
+        /* Keep builtins, replace the server-provided tail. */
+        var builtins = new Gee.ArrayList<CommandInfo> ();
+        foreach (var command in commands) {
+            if (command.builtin) {
+                builtins.add (command);
+            }
+        }
+        commands = builtins;
+        foreach (var command in server_commands) {
+            commands.add (command);
+        }
+        /* The row list is now stale: force a rebuild on the next
+         *  show even if the query did not change. */
         last_command_query = null;
     }
 
     /** Shows the inline list while the input starts with a slash and
      *  something matches what has been typed so far. */
-    private void update_command_list () {
+    private void update_command_popup () {
         var text = text_view.buffer.text;
         if (!text.has_prefix ("/") || text.contains ("\n")) {
             hide_commands ();
             return;
         }
         var typed = text.substring (1);
+        /* The query is everything up to the first space. Splitting an
+         *  empty string (just "/" typed) yields no element at all, which
+         *  used to hand a null to the filter. */
         var space = typed.index_of_char (' ');
         var query = (space < 0 ? typed : typed.substring (0, space)).down ();
         rebuild_command_list (query);
@@ -613,14 +541,6 @@ public class Composer : Gtk.Box {
         }
         commands_shown = false;
         command_revealer.reveal_child = false;
-    }
-
-    private int list_box_rows (Gtk.ListBox box) {
-        int n = 0;
-        for (var c = box.get_first_child (); c != null; c = c.get_next_sibling ()) {
-            n++;
-        }
-        return n;
     }
 
     private void rebuild_command_list (string query) {
@@ -653,114 +573,61 @@ public class Composer : Gtk.Box {
     }
 
     private void move_command_selection (bool down) {
-        var current = command_list.get_selected_row ();
-        Gtk.ListBoxRow? target;
-        if (current == null) {
-            target = command_list.get_row_at_index (down ? 0 : list_box_rows (command_list) - 1);
-        } else {
-            var sib = down ? (Gtk.ListBoxRow?) current.get_next_sibling ()
-                : (Gtk.ListBoxRow?) current.get_prev_sibling ();
-            if (sib == null) {
-                target = down ? command_list.get_row_at_index (0)
-                    : command_list.get_row_at_index (list_box_rows (command_list) - 1);
-            } else {
-                target = sib;
-            }
+        var selected = command_list.get_selected_row ();
+        if (selected == null) {
+            return;
         }
-        if (target != null) {
-            command_list.select_row (target);
+        var next = down ? selected.get_next_sibling () : selected.get_prev_sibling ();
+        while (next != null && !(next is CommandRow)) {
+            next = down ? next.get_next_sibling () : next.get_prev_sibling ();
+        }
+        if (next != null) {
+            command_list.select_row ((Gtk.ListBoxRow) next);
         }
     }
 
     private void run_selected_command () {
-        var current = command_list.get_selected_row ();
-        if (current == null) {
+        var row = command_list.get_selected_row ();
+        if (row == null) {
             return;
         }
-        execute_command_row (((CommandRow) current).command);
+        execute_command_row (((CommandRow) row).command);
     }
 
     private void execute_command_row (CommandInfo command) {
         hide_commands ();
-        var text = @"/$(command.name) ";
-        text_view.buffer.text = text;
-        var iter = Gtk.TextIter ();
-        text_view.buffer.get_iter_at_offset (out iter, text.length);
-        text_view.buffer.place_cursor (iter);
+        text_view.buffer.text = "";
         command_requested (command.name, "");
     }
 
-    /* -- changed files chip -------------------------------------- */
-
-    private void build_diff_row () {
-        diff_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
-            margin_start = 12,
-            margin_end = 12,
-            margin_top = 8,
-            visible = false
-        };
-        diff_chip_spinner = new Gtk.Spinner () {
-            visible = false,
-            valign = Gtk.Align.CENTER,
-            tooltip_text = "Editing a file"
-        };
-        diff_chip_add = new Gtk.Label ("") {
-            valign = Gtk.Align.CENTER,
-            visible = false
-        };
-        diff_chip_add.add_css_class ("diff-add");
-        diff_chip_del = new Gtk.Label ("") {
-            valign = Gtk.Align.CENTER,
-            visible = false
-        };
-        diff_chip_del.add_css_class ("diff-del");
-        diff_chip_count = new Gtk.Label ("") {
-            valign = Gtk.Align.CENTER,
-            visible = false
-        };
-        diff_chip_count.add_css_class (Granite.CssClass.DIM);
-        diff_chip_count.add_css_class ("caption");
-
-        diff_editing_label = new Gtk.Label ("") {
-            xalign = 0,
-            ellipsize = Pango.EllipsizeMode.MIDDLE,
-            visible = false,
-            hexpand = true
-        };
-        diff_editing_label.add_css_class (Granite.CssClass.DIM);
-        diff_editing_label.add_css_class ("caption");
-
-        diff_button = new Gtk.MenuButton () {
-            valign = Gtk.Align.CENTER,
-            tooltip_text = "Files changed in this session"
-        };
-        diff_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-
-        var diff_chip_box = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6) {
-            valign = Gtk.Align.CENTER
-        };
-        diff_chip_box.append (diff_chip_spinner);
-        diff_chip_box.append (diff_chip_add);
-        diff_chip_box.append (diff_chip_del);
-        diff_chip_box.append (diff_chip_count);
-        diff_button.child = diff_chip_box;
-
-        diff_list_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
-        var diff_scrolled = new Gtk.ScrolledWindow () {
-            hscrollbar_policy = Gtk.PolicyType.NEVER,
-            propagate_natural_height = true,
-            child = diff_list_box
-        };
-        var diff_popover = new Gtk.Popover () {
-            child = diff_scrolled
-        };
-        OpenClient.set_menu_popover (diff_button, diff_popover);
-
-        diff_row.append (diff_button);
-        diff_row.append (diff_chip_box);
-        diff_row.append (diff_editing_label);
+    public void grab_focus_entry () {
+        text_view.grab_focus ();
     }
 
+    public void clear () {
+        text_view.buffer.text = "";
+        clear_attachments ();
+    }
+
+    public void set_running (bool running, string? detail = null) {
+        stop_button.visible = running;
+        if (running) {
+            busy_spinner.start ();
+            status_label.label = detail ?? "Generating…";
+        } else {
+            busy_spinner.stop ();
+        }
+    }
+
+    public void set_status_text (string text) {
+        if (!stop_button.visible) {
+            status_label.label = text;
+        }
+    }
+
+    /** Rebuilds the changed-files chip and its popover: one row per
+     *  path, plus a spinner on files being written right now (including
+     *  ones the diff has not caught up with yet). */
     public void set_diff_files (Gee.ArrayList<FileDiff> files, Gee.ArrayList<string> editing) {
         if (diff_row == null || diff_editing_label == null) {
             return;
@@ -768,6 +635,7 @@ public class Composer : Gtk.Box {
         if (files.size == 0 && editing.size == 0) {
             diff_row.visible = false;
             diff_editing_label.visible = false;
+            clear_box (diff_list_box);
             return;
         }
 
@@ -778,21 +646,21 @@ public class Composer : Gtk.Box {
             deletions += diff.deletions;
         }
         diff_row.visible = true;
-
         diff_chip_add.label = @"+$additions";
         diff_chip_del.label = @"−$deletions";
+        /* Zero counts say nothing worth the pixels: a file with only
+         *  additions reads "+5 · 1", not "+5 −0 · 1". */
         diff_chip_add.visible = additions > 0;
         diff_chip_del.visible = deletions > 0;
         diff_chip_count.label = @"· $(files.size)";
-
+        diff_button.tooltip_text = files.size == 1
+            ? "1 file changed in this session"
+            : @"$(files.size) files changed in this session";
         var busy = editing.size > 0;
         diff_chip_spinner.visible = busy;
-        if (busy) {
-            diff_chip_spinner.start ();
-        } else {
-            diff_chip_spinner.stop ();
-        }
-
+        diff_chip_spinner.spinning = busy;
+        /* Name the file being written, so the input shows what is
+         *  changing without opening anything. */
         if (busy) {
             var first = GLib.Path.get_basename (editing[0]);
             diff_editing_label.label = editing.size > 1
@@ -803,37 +671,147 @@ public class Composer : Gtk.Box {
         } else {
             diff_editing_label.visible = false;
         }
+
+        clear_box (diff_list_box);
+        var listed = new Gee.HashSet<string> ();
+        foreach (var diff in files) {
+            listed.add (diff.path);
+            diff_list_box.append (diff_file_row (diff.path, diff.additions,
+                diff.deletions, diff.status, editing.contains (diff.path)));
+        }
+        /* Files being written that the diff does not know about yet
+         *  (a brand-new file, or a fetch still in flight). */
+        foreach (var path in editing) {
+            if (listed.contains (path)) {
+                continue;
+            }
+            diff_list_box.append (diff_file_row (path, -1, -1, "", true));
+        }
     }
 
-    /* -- context meter ----------------------------------------- */
+    /** One +/− number on the chip, hidden until it has something to
+     *  say. */
+    private static Gtk.Label chip_count (string css_class) {
+        var label = new Gtk.Label ("") {
+            valign = Gtk.Align.CENTER,
+            visible = false
+        };
+        label.add_css_class (css_class);
+        return label;
+    }
 
-    private void build_context () {
-        context_row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 0);
-        context_row.add_css_class ("composer-context");
-        context_level = new Gtk.LevelBar () {
-            min_value = 0,
-            max_value = 1
+    /** One changed file: status icon, name, +/− counts and a spinner
+     *  while it is being written. Negative counts mean "unknown yet". */
+    private static Gtk.Widget diff_file_row (string path, int additions, int deletions,
+        string status, bool editing) {
+        var row = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 8) {
+            margin_top = 4,
+            margin_bottom = 4,
+            margin_start = 8,
+            margin_end = 8
         };
-        context_label = new Gtk.Label ("") {
-            xalign = 0
-        };
-        context_status = new Gtk.Label ("") {
+        row.tooltip_text = path;
+
+        var icon_name = status == "added" ? "list-add"
+            : (status == "deleted" ? "edit-delete" : "text-x-generic");
+        row.append (new Gtk.Image.from_icon_name (icon_name) {
+            pixel_size = 14,
+            valign = Gtk.Align.CENTER
+        });
+
+        if (editing) {
+            var spinner = new Gtk.Spinner () {
+                spinning = true,
+                valign = Gtk.Align.CENTER,
+                tooltip_text = "Being changed now"
+            };
+            row.append (spinner);
+        }
+
+        var name = GLib.Path.get_basename (path);
+        var name_label = new Gtk.Label (name) {
             xalign = 0,
             hexpand = true,
-            halign = Gtk.Align.START,
-            ellipsize = Pango.EllipsizeMode.END
+            ellipsize = Pango.EllipsizeMode.MIDDLE,
+            max_width_chars = 28
         };
-        context_status.add_css_class (Granite.CssClass.DIM);
-        context_status.add_css_class ("caption");
-        context_row.append (context_level);
-        context_row.append (context_label);
-        context_row.append (context_status);
+        row.append (name_label);
+
+        if (additions > 0) {
+            var add_label = new Gtk.Label (@"+$additions");
+            add_label.add_css_class ("diff-add");
+            row.append (add_label);
+        }
+        if (deletions > 0) {
+            var del_label = new Gtk.Label (@"−$deletions");
+            del_label.add_css_class ("diff-del");
+            row.append (del_label);
+        }
+        return row;
     }
 
-    public void grab_focus_entry () {
-        text_view.grab_focus ();
+    private static void clear_box (Gtk.Box box) {
+        Gtk.Widget? child = box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            box.remove (child);
+            child = next;
+        }
     }
 
+    public void set_context (double fraction, string label) {
+        if (fraction < 0.0) {
+            context_row.visible = false;
+            return;
+        }
+        context_row.visible = true;
+        var clamped = double.min (1.0, double.max (0.0, fraction));
+        /* Guarded: usage events arrive several times per second, and
+         *  writing an identical value (re)invalidates layout/style. */
+        if (clamped != last_context_value) {
+            context_bar.value = clamped;
+            last_context_value = clamped;
+        }
+        /* Color ramp lives here, not in offset selectors (see style.css). */
+        string band = clamped >= 0.92 ? "context-full"
+            : (clamped >= 0.75 ? "context-high" : "");
+        if (band != last_context_band) {
+            context_bar.remove_css_class ("context-high");
+            context_bar.remove_css_class ("context-full");
+            if (band != "") {
+                context_bar.add_css_class (band);
+            }
+            last_context_band = band;
+        }
+        if (label != last_context_label) {
+            context_label.label = label;
+            context_label.tooltip_text = @"Context used: $(label)";
+            last_context_label = label;
+        }
+    }
+
+    /* -- permissions -------------------------------------------------- */
+
+    public void show_permission (string request_id, string description) {
+        permission_request_id = request_id;
+        permission_label.label = @"Permission requested: $description";
+        permission_revealer.reveal_child = true;
+    }
+
+    public void hide_permission () {
+        permission_request_id = "";
+        permission_revealer.reveal_child = false;
+    }
+
+    private void decide_permission (string decision) {
+        if (permission_request_id == "") {
+            return;
+        }
+        permission_decision (permission_request_id, decision);
+        hide_permission ();
+    }
+
+    /* -- permissions --------------------------------------------------- */
     public void set_permission_mode (string mode) {
         permission_mode = mode;
         update_permission_mode_button ();
@@ -862,11 +840,271 @@ public class Composer : Gtk.Box {
         permission_mode_button.tooltip_text = @"Permission mode: $label (click to cycle)";
     }
 
-    /* -- sending ------------------------------------------------------ */
+    /* -- forms -------------------------------------------------------- */
 
-    public void set_send_with_ctrl_enter (bool value) {
-        ctrl_enter_to_send = value;
+    public void show_form (FormInfo form) {
+        form_card.set_form (form);
+        form_revealer.reveal_child = true;
     }
+
+    public void hide_form () {
+        form_revealer.reveal_child = false;
+        form_card.set_form (null);
+    }
+
+    /* -- attachments -------------------------------------------------- */
+
+    private bool try_paste_image () {
+        var clipboard = text_view.get_clipboard ();
+        var formats = clipboard.get_formats ();
+        if (formats == null) {
+            return false;
+        }
+        /* Raw pixels (screenshots, copied images) first. */
+        if (formats.contain_gtype (typeof (Gdk.Texture))) {
+            clipboard.read_texture_async.begin (null, (obj, res) => {
+                try {
+                    var texture = clipboard.read_texture_async.end (res);
+                    if (texture != null) {
+                        attach_texture (texture, "pasted-image.png");
+                    }
+                } catch (Error e) {
+                    warning ("Paste failed: %s", e.message);
+                }
+            });
+            return true;
+        }
+        /* Files copied from the file manager. */
+        if (formats.contain_gtype (typeof (Gdk.FileList))) {
+            clipboard.read_value_async.begin (typeof (Gdk.FileList), GLib.Priority.DEFAULT, null, (obj, res) => {
+                try {
+                    unowned GLib.Value? value = clipboard.read_value_async.end (res);
+                    var list = value as Gdk.FileList;
+                    if (list == null) {
+                        return;
+                    }
+                    foreach (var file in list.get_files ()) {
+                        attach_file (file);
+                    }
+                } catch (Error e) {
+                    warning ("Paste files failed: %s", e.message);
+                }
+            });
+            return true;
+        }
+        /* Some file managers only advertise text/uri-list. */
+        if (formats.contain_mime_type ("text/uri-list")) {
+            read_clipboard_uri_list.begin (clipboard);
+            return true;
+        }
+        return false;
+    }
+
+    /** Reads a uri-list from the clipboard and ingests it. */
+    private async void read_clipboard_uri_list (Gdk.Clipboard clipboard) {
+        try {
+            var stream = yield OpenClient.clipboard_read_stream (clipboard, "text/uri-list");
+            if (stream != null) {
+                ingest_uri_list (stream);
+            }
+        } catch (Error e) {
+            warning ("Paste URI list failed: %s", e.message);
+        }
+    }
+
+    private void ingest_uri_list (GLib.InputStream stream) {
+        var data = new GLib.DataInputStream (stream);
+        try {
+            string? line;
+            size_t length;
+            while ((line = data.read_line (out length)) != null) {
+                var uri = line.strip ();
+                if (uri == "" || uri.has_prefix ("#")) {
+                    continue;
+                }
+                attach_file (GLib.File.new_for_uri (uri));
+            }
+        } catch (Error e) {
+            warning ("Read URI list failed: %s", e.message);
+        }
+    }
+
+    private bool on_files_dropped (GLib.Value value) {
+        var list = value as Gdk.FileList;
+        if (list == null) {
+            return false;
+        }
+        var accepted = false;
+        foreach (var file in list.get_files ()) {
+            attach_file (file);
+            accepted = true;
+        }
+        return accepted;
+    }
+
+    private void pick_images () {
+        pick_images_async.begin ();
+    }
+
+    private async void pick_images_async () {
+        var files = yield Portals.pick_images ();
+        if (files == null) {
+            return;
+        }
+        foreach (var file in files) {
+            attach_file (file);
+        }
+    }
+
+    private void attach_file (GLib.File file) {
+        attach_file_async.begin (file);
+    }
+
+    private async void attach_file_async (GLib.File file) {
+        var path = file.get_path ();
+        if (path == null) {
+            return;
+        }
+
+        string? mime = null;
+
+        /* MIME sniffing hits the disk; keep it off the main thread. */
+        Work.submit_with_resume (() => {
+            try {
+                var info = file.query_info ("standard::content-type", GLib.FileQueryInfoFlags.NONE);
+                mime = info.get_content_type ();
+            } catch (Error e) {
+                warning ("Could not read %s: %s", path, e.message);
+            }
+        }, attach_file_async.callback);
+
+        yield;
+
+        /* Anything but a directory: an image gets a preview, every
+         *  other file a named chip in the bubble. Refusing non-images
+         *  meant the paperclip did nothing at all for them, with no
+         *  way to tell why. */
+        if (mime == null || mime == "inode/directory") {
+            return;
+        }
+        var attachment = new Attachment () {
+            path = path,
+            name = GLib.Path.get_basename (path),
+            mime = mime
+        };
+        attachments.add (attachment);
+        rebuild_attachment_chips ();
+    }
+
+    private void attach_texture (Gdk.Texture texture, string name) {
+        var dir = GLib.Path.build_filename (GLib.Environment.get_user_cache_dir (), "opencode-client", "paste");
+        var stamp = GLib.get_real_time ().to_string ();
+        var path = GLib.Path.build_filename (dir, @"image-$stamp.png");
+
+        /* Encode on the main thread (GdkTexture is not thread-safe),
+         * then write the file on a worker. */
+        var bytes = texture.save_to_png_bytes ();
+
+        Work.submit (() => {
+            try {
+                GLib.DirUtils.create_with_parents (dir, 448);
+                GLib.FileUtils.set_data (path, bytes.get_data ());
+            } catch (Error e) {
+                warning ("Could not save pasted image: %s", e.message);
+                return;
+            }
+            Idle.add (() => {
+                attachments.add (new Attachment () {
+                    path = path,
+                    name = name,
+                    mime = "image/png"
+                });
+                rebuild_attachment_chips ();
+                return false;
+            });
+        });
+    }
+
+    /** Shows a decoded pixbuf in an image widget. Gtk.Image's pixbuf
+     *  setter was deprecated in GTK 4.12 in favour of taking a
+     *  Gdk.Paintable, so the pixbuf is wrapped once. */
+    private static void set_picture (Gtk.Image image, Gdk.Pixbuf pixbuf) {
+        image.set_from_paintable (pixbuf_texture (pixbuf));
+    }
+
+    private void rebuild_attachment_chips () {
+        Gtk.Widget? child = attachments_box.get_first_child ();
+        while (child != null) {
+            var next = child.get_next_sibling ();
+            attachments_box.remove (child);
+            child = next;
+        }
+
+        foreach (var attachment in attachments) {
+            var chip = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
+            chip.add_css_class ("attachment-chip");
+
+            var thumbnail = new Gtk.Image.from_icon_name ("image-x-generic");
+            chip.append (thumbnail);
+
+            var label = new Gtk.Label (attachment.name) {
+                xalign = 0,
+                ellipsize = Pango.EllipsizeMode.MIDDLE,
+                max_width_chars = 20
+            };
+            chip.append (label);
+
+            var captured = attachment;
+            var remove_button = new Gtk.Button.from_icon_name ("window-close") {
+                tooltip_text = "Remove",
+                valign = Gtk.Align.CENTER
+            };
+            remove_button.add_css_class (Granite.STYLE_CLASS_FLAT);
+            remove_button.clicked.connect (() => {
+                attachments.remove (captured);
+                rebuild_attachment_chips ();
+            });
+            chip.append (remove_button);
+
+            attachments_box.append (chip);
+
+            /* Decode the thumbnail off the main thread, then swap it in.
+             *  Result is cached per path: re-listing the chips (adding
+             *  or removing one attachment) used to re-submit a decode
+             *  for every attachment every time. */
+            var path = attachment.path;
+            if (thumbnail_cache.has_key (path)) {
+                var cached = thumbnail_cache[path];
+                if (cached != null) {
+                    set_picture (thumbnail, cached);
+                }
+            } else {
+                Work.submit (() => {
+                    Gdk.Pixbuf? pixbuf = null;
+                    try {
+                        pixbuf = new Gdk.Pixbuf.from_file_at_scale (path, 64, 64, true);
+                    } catch (Error e) {
+                    }
+                    thumbnail_cache[path] = pixbuf;
+                    Idle.add (() => {
+                        if (pixbuf != null) {
+                            set_picture (thumbnail, pixbuf);
+                        }
+                        return false;
+                    });
+                });
+            }
+        }
+
+        attachments_revealer.reveal_child = attachments.size > 0;
+    }
+
+    private void clear_attachments () {
+        attachments.clear ();
+        rebuild_attachment_chips ();
+    }
+
+    /* -- sending ------------------------------------------------------ */
 
     private void request_send () {
         var text = text_view.buffer.text.strip ();
@@ -881,30 +1119,8 @@ public class Composer : Gtk.Box {
         clear_attachments ();
         send_requested (text, files);
     }
-
-    private void update_send_state () {
-        var text = text_view.buffer.text.strip ();
-        send_button.sensitive = text != "" || attachments.size > 0;
-    }
-
-    public void set_running (bool running, string? detail = null) {
-        busy_spinner.visible = running;
-        if (running) {
-            busy_spinner.start ();
-        } else {
-            busy_spinner.stop ();
-        }
-        stop_button.visible = running;
-        send_button.visible = !running;
-        status_label.label = detail != "" ? detail : (running ? "Working…" : "");
-        status_label.visible = detail != "" || running;
-    }
-
-    public void set_status_text (string text) {
-        status_label.label = text;
-        status_label.visible = text != "";
-    }
 }
+
 
 public class CommandRow : Gtk.ListBoxRow {
     public CommandInfo command;
