@@ -78,6 +78,7 @@ executable(
   'src/Utils/Work.vala',
   'src/Utils/Portals.vala',
   'src/Widgets/ChatView.vala',
+  'src/Widgets/ChangeCard.vala',
   'src/Widgets/Composer.vala',
   'src/Widgets/DiffDialog.vala',
   'src/Widgets/FormCard.vala',

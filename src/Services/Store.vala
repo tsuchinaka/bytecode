@@ -64,6 +64,13 @@ public class Store : GLib.Object {
     public signal void forms_changed (string session_id);
     public signal void tool_changed (string message_id, string call_id, string phase);
     public signal void diffs_changed (string session_id);
+
+    /** One file's change, as it happens: emitted when a path shows up
+     *  in the session's diff or its counts or status move, so the
+     *  conversation can show the change where it happened instead of
+     *  only in the changes dialog. */
+    public signal void file_changed (string session_id, string path, int additions,
+        int deletions, string status, string patch);
     public signal void divider_changed (string session_id, string divider_id, string icon_name, string text, string status);
     public signal void divider_delta (string session_id, string divider_id, string delta);
     public signal void commands_changed ();
@@ -134,6 +141,9 @@ public class Store : GLib.Object {
     /** The active session's changed files, one entry per path, in the
      *  order the server reported them. */
     public Gee.ArrayList<FileDiff> diff_list;
+    /** Last state reported per path (see file_changed), so a refresh
+     *  only speaks up for files that actually moved. */
+    private Gee.HashMap<string, string> reported_changes;
     /** Coalesced diff refresh (see schedule_diff_refresh). */
     private uint diff_refresh_source = 0;
     private string diff_refresh_pending = "";
@@ -190,6 +200,7 @@ public class Store : GLib.Object {
         live_tools_by_session = new Gee.HashMap<string, Gee.ArrayList<string>> ();
         active_message_ids = new Gee.HashSet<string> ();
         diff_list = new Gee.ArrayList<FileDiff> ();
+        reported_changes = new Gee.HashMap<string, string> ();
     }
 
     /** Session lookup by id: O(1) instead of a linear scan. Returns
@@ -728,9 +739,43 @@ public class Store : GLib.Object {
             diff_files = diff_list.size;
             diff_additions = additions;
             diff_deletions = deletions;
+            report_changed_files (session_id);
             diffs_changed (session_id);
         } catch (Error e) {
             debug ("Diff stat failed: %s", e.message);
+        }
+    }
+
+    /** Speaks up for every file whose change is new or moved since the
+     *  last refresh, and forgets paths that left the diff. Only the
+     *  active session's changes go anywhere: a background session's
+     *  diff is loaded for its own UI, not to draw it in someone else's
+     *  conversation. */
+    private void report_changed_files (string session_id) {
+        var live = session_id == active_session_id;
+        var present = new Gee.HashSet<string> ();
+        foreach (var diff in diff_list) {
+            present.add (diff.path);
+            var signature = @"$(diff.additions):$(diff.deletions):$(diff.status)";
+            var previous = reported_changes.has_key (diff.path) ? reported_changes[diff.path] : "";
+            if (signature == previous) {
+                continue;
+            }
+            reported_changes[diff.path] = signature;
+            if (live) {
+                file_changed (session_id, diff.path, diff.additions, diff.deletions,
+                    diff.status, diff.patch);
+            }
+        }
+
+        var gone = new Gee.ArrayList<string> ();
+        foreach (var path in reported_changes.keys) {
+            if (!present.contains (path)) {
+                gone.add (path);
+            }
+        }
+        foreach (var path in gone) {
+            reported_changes.unset (path);
         }
     }
 
@@ -1114,6 +1159,11 @@ public class Store : GLib.Object {
 
         active_session_id = session_id;
         active_session_changed ();
+
+        /* Changes belong to the session they were made in: the next
+         *  diff refresh reports this session's files from scratch, so
+         *  opening a session shows what it has already changed. */
+        reported_changes.clear ();
 
         clear_active_messages ();
         messages_loaded ();

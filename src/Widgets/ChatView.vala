@@ -21,6 +21,12 @@ public class ChatView : Gtk.Box {
     private Gtk.Button latest_pill;
     private Gee.HashMap<string, MessageBubble> bubbles;
     private Gee.HashMap<string, SystemDivider> dividers;
+    /** One card per changed file, updated in place as a turn keeps
+     *  writing it (see set_file_change). */
+    private Gee.HashMap<string, ChangeCard> changes;
+    /** The same cards in the order they arrived, so a rebuild can put
+     *  them back after the conversation in a stable order. */
+    private Gee.ArrayList<string> change_order;
     private Gee.HashMap<string, string> pending_models;
     private bool stick_to_bottom = true;
     private Gtk.Widget? pending_top_widget = null;
@@ -55,6 +61,8 @@ public class ChatView : Gtk.Box {
         );
         bubbles = new Gee.HashMap<string, MessageBubble> ();
         dividers = new Gee.HashMap<string, SystemDivider> ();
+        changes = new Gee.HashMap<string, ChangeCard> ();
+        change_order = new Gee.ArrayList<string> ();
         pending_models = new Gee.HashMap<string, string> ();
         quips = {
             "Doing the cookies…",
@@ -137,6 +145,8 @@ public class ChatView : Gtk.Box {
         }
         bubbles.clear ();
         dividers.clear ();
+        changes.clear ();
+        change_order.clear ();
         pending_models.clear ();
         latest_pill.visible = false;
         /* A fresh conversation starts at the bottom: the scroll state
@@ -340,6 +350,17 @@ public class ChatView : Gtk.Box {
     /** Ends a bulk rebuild: one pin at the end. */
     public void end_bulk () {
         bulk_loading = false;
+        /* Change cards describe what the session looks like now, not
+         *  where in its history a render happened to be: after a
+         *  rebuild they belong after the conversation. */
+        foreach (var path in change_order) {
+            var card = changes[path];
+            if (card == null || card.get_parent () != message_box) {
+                continue;
+            }
+            message_box.remove (card);
+            message_box.append (card);
+        }
         pin_pending_last ();
         scroll_to_bottom (true);
     }
@@ -377,6 +398,39 @@ public class ChatView : Gtk.Box {
             return;
         }
         divider.append_summary (delta);
+        scroll_to_bottom ();
+    }
+
+    /** A new turn starts: changes after this (even to a file an earlier
+     *  turn already touched) get their own card, so the conversation
+     *  records what each turn changed instead of one card silently
+     *  growing for the whole session. The cards already on screen stay
+     *  where they are. */
+    public void begin_turn_changes () {
+        changes.clear ();
+        change_order.clear ();
+    }
+
+    /** A file the agent changed, shown in the conversation where it
+     *  happened: one card per path within a turn, updated in place
+     *  while that turn keeps writing it. */
+    public void set_file_change (string path, int additions, int deletions,
+        string status, string patch, bool editing) {
+        var card = changes[path];
+        var is_new = card == null;
+        if (is_new) {
+            card = new ChangeCard (path);
+            changes[path] = card;
+            change_order.add (path);
+            message_box.append (card);
+        }
+        card.set_change (additions, deletions, status, patch, editing);
+        if (!is_new || bulk_loading) {
+            return;
+        }
+        card.add_css_class ("chat-arrive");
+        pin_pending_last ();
+        pending_top_widget = card;
         scroll_to_bottom ();
     }
 

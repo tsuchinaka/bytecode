@@ -477,6 +477,35 @@ levelbar.context-full block.filled {
   font-size: 0.9em;
 }
 
+/* ------------------------------------------------- file changes */
+
+/* A file the agent changed, in the conversation where it happened:
+ * same language as the tool cards, one card per file, patch folded. */
+.change-card {
+  background-color: alpha(@borders, 0.16);
+  border: 1px solid alpha(@borders, 0.28);
+  border-radius: 12px;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+.change-header {
+  border-radius: 12px;
+  padding: 0;
+}
+
+.change-header:hover {
+  background-color: alpha(@theme_fg_color, 0.06);
+}
+
+.change-path {
+  font-size: 0.9em;
+}
+
+.change-body {
+  border-top: 1px solid alpha(@borders, 0.22);
+}
+
 /* ------------------------------------------------------- permission */
 
 .permission-banner {

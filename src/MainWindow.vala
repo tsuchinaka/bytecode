@@ -709,6 +709,11 @@ public class MainWindow : Gtk.ApplicationWindow {
 
         store.message_appended.connect ((message) => {
             chat_view.add_message (message);
+            if (message.role == MessageRole.USER) {
+                /* A new turn starts here: its file changes get their own
+                 * cards instead of growing a previous turn's. */
+                chat_view.begin_turn_changes ();
+            }
             /* Covers back-to-back sends: the status signal dedups when
              * the session is already running, but every new user bubble
              * still deserves the pending placeholder. */
@@ -784,6 +789,17 @@ public class MainWindow : Gtk.ApplicationWindow {
                 composer.set_diff_files (store.diff_list, editing);
                 session_panel.set_diff_files (store.diff_list, editing);
             }
+        });
+
+        /* Every change the agent makes lands in the conversation, where
+         *  it happened; the chip in the input stays the summary and the
+         *  way to the full list. */
+        store.file_changed.connect ((session_id, path, additions, deletions, status, patch) => {
+            if (session_id != store.active_session_id) {
+                return;
+            }
+            chat_view.set_file_change (path, additions, deletions, status, patch,
+                store.editing_paths_for (session_id).contains (path));
         });
 
         store.status_changed.connect((session_id, status) => {
