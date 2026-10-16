@@ -31,7 +31,7 @@ public class MessageBubble : Gtk.Box {
     private string live_last_tool = "";
     private string live_phase = "";
     private Gtk.Box tool_box;
-    private Gtk.FlowBox files_box;
+    private Gtk.Box files_box;
     private Gtk.Box content;
     /** Persistent turn-failure line (history), same icon language as
      *  the live error divider. Hidden when the turn was healthy. */
@@ -54,6 +54,9 @@ public class MessageBubble : Gtk.Box {
     /** True once a streaming render showed a capped tail, so the turn's
      *  end knows the full text still has to be rendered. */
     private bool tail_shown = false;
+    /** Widest an attachment preview is drawn (and decoded) at. */
+    private const int PREVIEW_PX = 320;
+
     /** History text beyond this is collapsed behind "Show more". */
     private const int HISTORY_TEXT_LIMIT = 2000;
     /** Coalescing: snappy while the answer is small… */
@@ -132,11 +135,12 @@ public class MessageBubble : Gtk.Box {
         tool_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 6);
         tool_box.visible = false;
 
-        files_box = new Gtk.FlowBox () {
-            column_spacing = 8,
-            row_spacing = 8,
-            homogeneous = false,
-            selection_mode = Gtk.SelectionMode.NONE,
+        /* One block per attachment, top to bottom: a chip that becomes
+         *  the picture once it decodes, with the file's name under it.
+         *  A vertical box rather than a flow box, because the swap is
+         *  what has to end up visible. */
+        files_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 8) {
+            halign = Gtk.Align.START,
             visible = false
         };
 
@@ -737,61 +741,66 @@ public class MessageBubble : Gtk.Box {
     public void add_file (FileAttachment file) {
         files_seen = true;
         content.visible = true;
-        /* The chip appears immediately: an attachment must never depend
-         * on an asynchronous decode to be visible, and a file that
-         * cannot be decoded still shows as a named chip. A decodable
-         * image then swaps itself in at the chip's position. */
-        var chip = append_file_chip (file);
+
+        /* One block per attachment: the chip, and under it the name of
+         *  the file. A decodable image swaps the chip for the picture
+         *  and keeps the name, so an attachment is never an unlabelled
+         *  box, and never an empty space when a decode fails. */
+        var block = new Gtk.Box (Gtk.Orientation.VERTICAL, 4) {
+            halign = Gtk.Align.START
+        };
+        block.append (file_chip (file));
+
+        Gtk.Label? caption = null;
+        if (file.is_image) {
+            caption = new Gtk.Label (file.display_name) {
+                xalign = 0,
+                visible = false
+            };
+            caption.add_css_class (Granite.CssClass.DIM);
+            caption.add_css_class ("caption");
+            caption.add_css_class ("attachment-caption");
+            block.append (caption);
+        }
+
+        files_box.append (block);
+        files_box.visible = true;
+
         if (!file.is_image) {
             return;
         }
         debug ("attachment %s: decoding", file.display_name);
-        file.load_pixbuf_async.begin (280, (obj, res) => {
+        file.load_pixbuf_async.begin (PREVIEW_PX, (obj, res) => {
             var pixbuf = file.load_pixbuf_async.end (res);
             if (pixbuf == null) {
                 debug ("attachment %s: kept as a chip (no pixbuf)", file.display_name);
                 return;
             }
-            var texture = pixbuf_texture (pixbuf);
-            var picture = new Gtk.Picture.for_paintable (texture) {
+            var picture = new Gtk.Picture.for_paintable (pixbuf_texture (pixbuf)) {
                 halign = Gtk.Align.START,
-                width_request = int.min (280, pixbuf.width),
+                width_request = int.min (PREVIEW_PX, pixbuf.width),
                 tooltip_text = file.display_name
             };
             picture.add_css_class ("attachment-image");
-            /* FlowBox wraps children in a FlowBoxChild, so the chip's
-             *  wrapper is what sits in the box. */
-            var wrapper = chip.get_parent ();
-            if (wrapper != null && wrapper.get_parent () == files_box) {
-                /* Same slot the chip occupies, so several attachments
-                 *  keep the order they were sent in. */
-                var position = flow_position (wrapper);
-                files_box.remove (wrapper);
-                files_box.insert (picture, position >= 0 ? position : -1);
-            } else {
-                files_box.append (picture);
+            /* Swap the chip out of the same block, so several
+             *  attachments hold the order they were sent in. */
+            var chip = block.get_first_child ();
+            if (chip != null) {
+                block.remove (chip);
+            }
+            block.prepend (picture);
+            if (caption != null) {
+                caption.visible = true;
             }
             files_box.visible = true;
             debug ("attachment %s: swapped in %dx%d", file.display_name, pixbuf.width, pixbuf.height);
         });
     }
 
-    /** Index of a child within the attachments box. */
-    private int flow_position (Gtk.Widget child) {
-        int index = 0;
-        for (var c = files_box.get_first_child (); c != null; c = c.get_next_sibling ()) {
-            if (c == child) {
-                return index;
-            }
-            index++;
-        }
-        return -1;
-    }
-
-    private Gtk.Widget append_file_chip (FileAttachment file) {
+    private Gtk.Widget file_chip (FileAttachment file) {
         var chip = new Gtk.Box (Gtk.Orientation.HORIZONTAL, 6);
         chip.add_css_class ("attachment-chip");
-        var icon = new Gtk.Image.from_icon_name ("text-x-generic") {
+        var icon = new Gtk.Image.from_icon_name (file.is_image ? "image-x-generic" : "text-x-generic") {
             pixel_size = 16
         };
         var label = new Gtk.Label (file.display_name) {
@@ -802,8 +811,6 @@ public class MessageBubble : Gtk.Box {
         chip.append (icon);
         chip.append (label);
         chip.tooltip_text = file.uri;
-        files_box.append (chip);
-        files_box.visible = true;
         return chip;
     }
 

@@ -349,6 +349,12 @@ popover > contents {
   border-radius: 8px;
 }
 
+/* Names the file under its preview: an attachment should never be an
+ * unlabelled picture. */
+.attachment-caption {
+  font-size: 0.85em;
+}
+
 /* Forms */
 .form-card {
   padding: 12px;
