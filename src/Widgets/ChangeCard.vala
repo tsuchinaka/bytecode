@@ -16,9 +16,6 @@ namespace OpenClient {
 public class ChangeCard : Gtk.Box {
     public string path { get; construct; }
 
-    /** Tallest the patch gets before it scrolls inside the card. */
-    private const int BODY_MAX_HEIGHT = 360;
-
     private Gtk.Image icon;
     private Gtk.Spinner spinner;
     private Gtk.Label add_label;
@@ -115,11 +112,13 @@ public class ChangeCard : Gtk.Box {
         });
         append (header_button);
 
+        /* Vertical is dynamic: the card takes the height the patch
+         *  needs, so opening one shows the whole change. Only long
+         *  lines scroll (sideways), which is how diffs are read. */
         scroller = new Gtk.ScrolledWindow () {
             hscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
-            vscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
-            propagate_natural_height = true,
-            max_content_height = BODY_MAX_HEIGHT
+            vscrollbar_policy = Gtk.PolicyType.NEVER,
+            propagate_natural_height = true
         };
         scroller.add_css_class ("change-body");
 

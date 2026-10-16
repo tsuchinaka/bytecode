@@ -67,9 +67,6 @@ internal class SystemIndicator : Gtk.Box {
 public class SystemDivider : Gtk.Box {
     public string divider_id { get; construct; }
 
-    /** Tallest the folded-out summary gets before it scrolls. */
-    private const int BODY_MAX_HEIGHT = 420;
-
     private Gtk.CenterBox rule_row;
     private Gtk.Label title_label;
     private SystemIndicator rule_indicator;
@@ -212,11 +209,13 @@ public class SystemDivider : Gtk.Box {
         body_label.add_css_class ("summary-body");
         Markdown.wire_links (body_label);
 
+        /* The summary takes the height it needs: it is the context the
+         *  model was left with, and reading it should not mean
+         *  scrolling inside a box of its own. */
         var scroller = new Gtk.ScrolledWindow () {
             hscrollbar_policy = Gtk.PolicyType.NEVER,
-            vscrollbar_policy = Gtk.PolicyType.AUTOMATIC,
+            vscrollbar_policy = Gtk.PolicyType.NEVER,
             propagate_natural_height = true,
-            max_content_height = BODY_MAX_HEIGHT,
             child = body_label
         };
         scroller.add_css_class ("summary-body-scroller");

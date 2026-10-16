@@ -391,7 +391,6 @@ public class Composer : Gtk.Box {
              *  popover came out ~50px tall and the rows spilled out of
              *  it. Natural height takes the rows up to the cap. */
             propagate_natural_height = true,
-            max_content_height = 320,
             child = diff_list_box
         };
         var diff_popover = new Gtk.Popover () {
