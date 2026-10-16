@@ -80,7 +80,7 @@ executable(
   'src/Widgets/ChatView.vala',
   'src/Widgets/ChangeCard.vala',
   'src/Widgets/Composer.vala',
-  'src/Widgets/DiffDialog.vala',
+  'src/Widgets/DiffPatchView.vala',
   'src/Widgets/FormCard.vala',
   'src/Widgets/MessageBubble.vala',
   'src/Widgets/ReasoningBubble.vala',

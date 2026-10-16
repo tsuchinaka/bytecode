@@ -121,9 +121,6 @@ public class MainWindow : Gtk.ApplicationWindow {
         sidebar.session_rename_requested.connect ((session_id) => {
             show_rename_dialog (session_id);
         });
-        sidebar.session_diff_requested.connect ((session_id) => {
-            show_diff_dialog (session_id);
-        });
         sidebar.session_export_requested.connect ((session_id) => {
             export_session.begin (session_id);
         });
@@ -218,11 +215,6 @@ public class MainWindow : Gtk.ApplicationWindow {
                 return;
             }
             app.store.reply_permission.begin (app.store.active_session_id, request_id, decision);
-        });
-        composer.diff_requested.connect (() => {
-            if (app.store.active_session_id != null) {
-                show_diff_dialog (app.store.active_session_id);
-            }
         });
         composer.command_requested.connect ((name, text) => {
             run_command (name, text);
@@ -1154,11 +1146,6 @@ public class MainWindow : Gtk.ApplicationWindow {
             case "new":
                 show_new_session ();
                 break;
-            case "diff":
-                if (store.active_session_id != null) {
-                    show_diff_dialog (store.active_session_id);
-                }
-                break;
             default:
                 store.run_server_command.begin (name, text);
                 break;
@@ -1403,33 +1390,6 @@ public class MainWindow : Gtk.ApplicationWindow {
         dialog.present ();
         entry.grab_focus ();
         entry.select_region (0, -1);
-    }
-
-    private void show_diff_dialog (string session_id) {
-        Session? target = null;
-        foreach (var session in app.store.sessions) {
-            if (session.id == session_id) {
-                target = session;
-                break;
-            }
-        }
-        if (target == null || app.store.client == null) {
-            return;
-        }
-
-        var dialog = new DiffDialog (this, target.title);
-        dialog.present ();
-
-        var client = app.store.client;
-        client.get_diff.begin (session_id, (obj, res) => {
-            try {
-                dialog.set_diffs (client.get_diff.end (res));
-            } catch (Error e) {
-                warning ("Diff failed: %s", e.message);
-                show_toast (@"Could not load changes: $(e.message)");
-                dialog.close ();
-            }
-        });
     }
 
     private void show_about () {

@@ -38,7 +38,6 @@ public class Composer : Gtk.Box {
     public signal void permission_decision (string request_id, string decision);
     public signal void form_answered (string form_id, Json.Node answer);
     public signal void form_cancelled (string form_id);
-    public signal void diff_requested ();
     public signal void command_requested (string name, string text);
     public signal void permission_mode_changed (string mode);
 
@@ -115,7 +114,6 @@ public class Composer : Gtk.Box {
         commands = new Gee.ArrayList<CommandInfo> ();
         commands.add (new CommandInfo () { name = "compact", description = "Compact the session context", builtin = true });
         commands.add (new CommandInfo () { name = "new", description = "Create a new session", builtin = true });
-        commands.add (new CommandInfo () { name = "diff", description = "View the session changes", builtin = true });
 
         /* Agent question dock */
         form_card = new FormCard ();
@@ -690,16 +688,6 @@ public class Composer : Gtk.Box {
             }
             diff_list_box.append (diff_file_row (path, -1, -1, "", true));
         }
-        diff_list_box.append (new Gtk.Separator (Gtk.Orientation.HORIZONTAL));
-        var open_button = new Gtk.Button.with_label ("View Full Changes") {
-            halign = Gtk.Align.FILL
-        };
-        open_button.add_css_class (Granite.STYLE_CLASS_FLAT);
-        open_button.clicked.connect (() => {
-            diff_button.popdown ();
-            diff_requested ();
-        });
-        diff_list_box.append (open_button);
     }
 
     /** One +/− number on the chip, hidden until it has something to

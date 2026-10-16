@@ -14,7 +14,6 @@ public class Sidebar : Gtk.Box {
     /** Bulk delete: the sessions ticked in selection mode. */
     public signal void sessions_delete_requested (Gee.ArrayList<string> session_ids);
     public signal void session_rename_requested (string session_id);
-    public signal void session_diff_requested (string session_id);
     public signal void session_export_requested (string session_id);
     public signal void session_fork_requested (string session_id);
     public signal void session_compact_requested (string session_id);
@@ -573,9 +572,6 @@ public class Sidebar : Gtk.Box {
                 case "rename":
                     session_rename_requested (session.id);
                     break;
-                case "diff":
-                    session_diff_requested (session.id);
-                    break;
                 case "export":
                     session_export_requested (session.id);
                     break;
@@ -1055,7 +1051,6 @@ public class SidebarRow : Granite.ListItem {
 
         var group = new GLib.SimpleActionGroup ();
         add_row_action (group, "rename");
-        add_row_action (group, "diff");
         add_row_action (group, "export");
         add_row_action (group, "fork");
         add_row_action (group, "compact");
@@ -1189,7 +1184,6 @@ public class SidebarRow : Granite.ListItem {
             last_menu_state = menu_state;
             menu.remove_all ();
             menu.append ("Rename…", "row.rename");
-            menu.append ("View Changes", "row.diff");
             menu.append ("Export Session", "row.export");
             menu.append ("Fork Session", "row.fork");
             menu.append ("Compact Context", "row.compact");
