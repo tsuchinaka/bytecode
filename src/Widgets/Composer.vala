@@ -376,6 +376,11 @@ public class Composer : Gtk.Box {
         var diff_scrolled = new Gtk.ScrolledWindow () {
             hscrollbar_policy = Gtk.PolicyType.NEVER,
             propagate_natural_width = true,
+            /* Without this the scroller asks for the child's minimum
+             *  height, which for a stack of rows is a sliver: the
+             *  popover came out ~50px tall and the rows spilled out of
+             *  it. Natural height takes the rows up to the cap. */
+            propagate_natural_height = true,
             max_content_height = 320,
             child = diff_list_box
         };
