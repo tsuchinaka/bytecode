@@ -5,7 +5,7 @@
  * attachment chips, multiline entry, context meter, model and
  * agent pickers, stop and send buttons.
  *
- * Images arrive via clipboard paste (Ctrl+V with an image) or
+ * Attachments arrive via clipboard paste (Ctrl+V with an image) or
  * file drag-and-drop. They are staged as files and sent as
  * `file://` prompt attachments.
  */
@@ -407,7 +407,7 @@ public class Composer : Gtk.Box {
         }
 
         attach_button = new Gtk.Button.from_icon_name ("mail-attachment-symbolic") {
-            tooltip_text = "Attach images (or paste and drop them here)",
+            tooltip_text = "Attach files (or paste and drop them here)",
             valign = Gtk.Align.CENTER
         };
         attach_button.add_css_class (Granite.STYLE_CLASS_FLAT);
@@ -874,8 +874,7 @@ public class Composer : Gtk.Box {
             });
             return true;
         }
-        /* Files copied from the file manager: attach the images,
-         * ignore the rest (the composer is images-only). */
+        /* Files copied from the file manager. */
         if (formats.contain_gtype (typeof (Gdk.FileList))) {
             clipboard.read_value_async.begin (typeof (Gdk.FileList), GLib.Priority.DEFAULT, null, (obj, res) => {
                 try {
@@ -981,7 +980,11 @@ public class Composer : Gtk.Box {
 
         yield;
 
-        if (mime == null || !mime.has_prefix ("image/")) {
+        /* Anything but a directory: an image gets a preview, every
+         *  other file a named chip in the bubble. Refusing non-images
+         *  meant the paperclip did nothing at all for them, with no
+         *  way to tell why. */
+        if (mime == null || mime == "inode/directory") {
             return;
         }
         var attachment = new Attachment () {
